@@ -29,6 +29,14 @@ Install the Atlas CLI and configure your cluster credentials:
 # Install Atlas CLI (macOS)
 brew install mongodb-atlas-cli
 
+----
+When we need to connect to an existing Mongo Atlas project
+
+Add your MongoDB Atlas account email to the project via the Atlas web UI (Project -> Access Manager)[cite: 2].
+Ensure your IP address is whitelisted in the Atlas Network Access settings[cite: 2].
+You can then retrieve the connection string using: atlas clusters connectionStrings describe <ClusterName>
+----
+
 # Authenticate via API keys (Select "plaintext" format)
 atlas setup
 
