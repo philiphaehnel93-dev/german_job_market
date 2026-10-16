@@ -1,0 +1,26 @@
+# Credentials & Environment Variables
+.env
+*.pem
+*credentials*.json
+*service_account*.json
+
+# uv & Python Virtual Environments
+.venv/
+venv/
+env/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# Project Outputs
+eda_outputs/
+
+# OS Generated Files
+.DS_Store
+.DS_Store?
+._*
