@@ -1,107 +1,77 @@
-# Job Market ETL & Machine Learning Pipeline
+# Pipeline purpose
 
-A modular data engineering and machine learning pipeline designed to analyze the German tech job market. The system ingests job postings across public APIs, backs up raw data into a Google Cloud Storage (GCP) Data Lake, stages records in MongoDB Atlas, enriches documents using a multi-core hybrid NLP engine, and prepares vectorized features for unsupervised topic discovery.
+The primary goal of this data engineering pipeline is to automatically ingest, secure, and transform messy, semi-structured job market data into a highly structured format. By moving data from public APIs through an immutable Data Lake and a NoSQL staging environment, we can apply robust Natural Language Processing (NLP) to extract precise technical skills. This rigorous engineering process is required to turn raw text into clean, tabular, and vectorized features ready for machine learning (topic modeling) and advanced analytics.
 
-For comprehensive architectural design, data flow lifecycle, and the microservices roadmap, please refer to **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+[Click to see tech stack](#core-tech-stack)
 
----
+secrets.txt provided upon request and not avalable from repository
 
-## Prerequisites
+# Pipeline Script Execution Order
 
-- **Python:** 3.10+
-- **Package Manager:** `uv`
-- **Cloud Accounts:** Google Cloud Platform (GCP) with an active billing account, MongoDB Atlas
-- **System CLIs:** Google Cloud CLI (`gcloud`), MongoDB Atlas CLI (`atlas`), Homebrew (macOS)
+This document outlines the required execution sequence for the Job Market ETL pipeline. It is structured to support initial data exploration, text enrichment, and advanced feature engineering.
 
----
+## Phase 1: Bootstrapping & Environment Setup
 
-## 1. Quickstart Setup Guide
+1. **`setup_project.sh`**
+   * **Purpose:** Automates the creation of your Google Cloud Platform (GCP) project, links your billing account, and enables the Cloud Storage API.
+   * **Output:** Generates the GCP Project ID required for your `.env` file.
 
-### Step 1.1: Provision Google Cloud Infrastructure
-Run the automated GCP provisioning script to create a project, link your billing account, and enable the Cloud Storage API:
+2. **`setup_env.sh`**
+   * **Purpose:** Initializes the local Python environment using the `uv` package manager. Installs dependencies and downloads the `de_core_news_sm` spaCy model.
 
-```bash
-bash setup_project.sh
-```
-Note: Save your new GCP Project ID output at the end of the script to use in your .env file.
-Step 1.2: Configure MongoDB Atlas Cluster
-Install the Atlas CLI and configure your cluster credentials:
-# Install Atlas CLI (macOS)
-brew install mongodb-atlas-cli
+## Phase 2: Ingestion & Cloud Storage (Root Directory)
 
-----
-When we need to connect to an existing Mongo Atlas project
+3. **`create_bucket.py`**
+   * **Purpose:** Authenticates with GCP and provisions the Data Lake storage bucket.
 
-Add your MongoDB Atlas account email to the project via the Atlas web UI (Project -> Access Manager)[cite: 2].
-Ensure your IP address is whitelisted in the Atlas Network Access settings[cite: 2].
-You can then retrieve the connection string using: atlas clusters connectionStrings describe <ClusterName>
-----
+4. **`ingest_jobs.py`**
+   * **Purpose:** Queries APIs, aggregates the raw JSON payload, and uploads it to the GCP bucket.
 
-# Authenticate via API keys (Select "plaintext" format)
-atlas setup
+5. **`gcs_to_mongo.py`**
+   * **Purpose:** Downloads raw data from GCP, clears existing staging collections, and inserts the unformatted data into MongoDB Atlas (`jobs_raw`).
 
-# Create a free M0 tier cluster (if you do not already have one)
-atlas cluster create ml-pipeline-cluster --tier M0 --provider AWS --region EU_CENTRAL_1
+## Phase 3: Initial EDA (Pre-NLP)
 
-# Create database user credentials
-atlas dbusers create --username admin --password <YourSecurePassword> --role readWriteAnyDatabase
+*Note: Before writing extraction rules, it is highly recommended to explore the `jobs_raw` collection to understand data quality, missing fields, and text distributions.*
 
-Step 1.3: Set Up Local Python Environment
-Use uv to configure an isolated virtual environment and download the required spaCy German language model:
-# Automated setup
-bash setup_env.sh
+6. **`job_market_eda.ipynb` (Part 1)**
+   * **Purpose:** Connect to MongoDB's raw collection to perform preliminary EDA. Analyze job title frequencies, text lengths, and identify API limitations before applying NLP.
 
-# OR Manual setup via uv
-uv venv
-source .venv/bin/activate
-uv pip install -r requirements.txt
-uv run python -m spacy download de_core_news_sm
+## Phase 4: Hybrid NLP Enrichment (`pipeline_enrichment/`)
 
-Step 1.4: Configure Environment Variables
-Create a .env file in the root of the project with your API keys, database connection string, and cloud credentials:
-# MongoDB Atlas
-MONGO_URI="mongodb+srv://admin:<YourSecurePassword>@<cluster-url>.mongodb.net/?retryWrites=true&w=majority"
+7. **`pipeline_enrichment/tech_dictionary.json`** *(Dependency)*
+   * **Purpose:** Static JSON containing the taxonomy of target technologies.
 
-# Adzuna API Credentials
-ADZUNA_APP_ID="your_adzuna_app_id"
-ADZUNA_APP_KEY="your_adzuna_app_key"
+8. **`pipeline_enrichment/extractor.py`** *(Dependency)*
+   * **Purpose:** The core NLP engine using FlashText and spaCy.
 
-# Google Cloud
-GCP_PROJECT_ID="your_gcp_project_id"
-GOOGLE_APPLICATION_CREDENTIALS="/path/to/your/gcp-key.json"
+9. **`pipeline_enrichment/mongo_enrichment_pipeline.py`**
+   * **Purpose:** Pulls raw documents from MongoDB, applies text extraction across multiple CPU cores, and saves structured entities to the `jobs_enriched` collection.
 
-2. Pipeline Execution Sequence
-Execute the pipeline stages sequentially using uv run to ensure all processes execute safely within the managed virtual environment.
+## Phase 5: Flattening & Feature Engineering - TODO
 
-2.1. Ingestion to Cloud Data Lake
-Provisions the standard GCS storage bucket and pulls job postings from the Adzuna and Bundesagentur für Arbeit (AfA) Jobsuche APIs:
+Before passing data to machine learning models, the nested NoSQL data must be transformed into a tabular format and converted into numerical vectors.
 
-uv run scripts/create_bucket.py
-uv run scripts/ingest_jobs.py
+10. **`pipeline_enrichment/ml_preprocessing_pipeline.py`**
+    * **Purpose:**
+      1. **Flattening:** Normalizes the nested JSON from `jobs_enriched` into a flat Pandas DataFrame.
+      2. **Feature Engineering:** Creates new structured variables and applies the Scikit-Learn `ColumnTransformer` (e.g., TF-IDF on descriptions, multi-hot encoding on skill arrays).
+      3. **Topic Modeling:** Fits unsupervised models (like NMF) to automatically discover and label job clusters.
+    * **Output:** Generates `data_vectorized.json` or writes the final engineered dataset back to the database.
 
-2.2 Staging to Operational Database
-Downloads raw payloads from the GCS bucket, clears existing staging collections to prevent duplicates, and inserts records into MongoDB Atlas:
-uv run scripts/gcs_to_mongo.py
+## Phase 6: Post-Enrichment EDA & Insights - TODO
 
-2.3 Multi-Core Hybrid NLP Enrichment
-Runs parallel worker processes to extract emails, coordinates, unambiguous skills, and context-dependent programming languages. Outputs to the jobs_enriched collection and writes data_enriched.json:
-uv run pipeline_enrichment/mongo_enrichment_pipeline.py
+11. **`job_market_eda.ipynb` (Part 2)**
+    * **Purpose:** Now that the data is fully enriched and topic-clustered, use the notebook to visualize skill co-occurrences, map geographical densities, and analyze the distribution of the newly discovered machine learning topics.
 
-2.4 Exploratory Data Analysis (EDA)
-Launch Jupyter to inspect job distributions, geographical densities, skill co-occurrences, and topic cluster boundaries:
-uv run jupyter notebook job_market_eda.ipynb
+## Core Tech Stack:
 
-TODO
+Python 3.10+ & uv: The foundation of the pipeline, utilizing uv as a blazingly fast, Rust-based package manager to ensure strict dependency isolation and reproducible execution.
 
-2.5. Tabular Flattening & Machine Learning Preprocessing
-Flattens polymorphic JSON structures into a tabular DataFrame, applies TF-IDF and multi-hot encoding, fits an NMF topic model, and exports data_vectorized.json:
-uv run pipeline_enrichment/ml_preprocessing_pipeline.py
+Google Cloud Storage (GCP): Acts as the immutable Cloud Data Lake, providing a secure, historical backup of all raw API payloads before any transformation occurs.
 
-4. Next Steps & Architecture Roadmap
-Web Scraping Integration (BeautifulSoup): Resolve Adzuna API snippet truncations by following redirect URLs to extract full HTML job posting bodies prior to raw lake ingestion.
+MongoDB Atlas: A fully managed NoSQL document database. It serves as the operational staging layer, chosen specifically for its ability to handle the highly polymorphic and unpredictable JSON schemas typical of third-party job APIs.
 
-Microservices Containerization (Docker): Package the pipeline stages (ingestion, staging, enrichment, ml_pipeline) into standalone, reproducible Docker containers to eliminate local dependency drift.
+spaCy & FlashText: The hybrid NLP engine. FlashText provides lightning-fast exact string matching (Aho-Corasick automaton), while spaCy handles complex grammatical context and ambiguity in the German language.
 
-Pipeline Orchestration (Apache Airflow): Transition execution from manual CLI runs to scheduled Airflow DAGs, enabling automated daily triggering, task dependency enforcement, and built-in retries.
-
-Serving Layer (FastAPI & Streamlit): Expose MongoDB collections and topic distribution endpoints via FastAPI, serving an interactive Streamlit UI for dynamic job market exploration.
+Pandas & Scikit-Learn: The feature engineering backbone used to flatten nested NoSQL documents into 2D matrices, apply TF-IDF vectorization, and perform unsupervised topic discovery.
