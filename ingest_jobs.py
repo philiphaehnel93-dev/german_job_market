@@ -207,6 +207,16 @@ def fetch_jobsuche(keywords: List[str], max_total_jobs: int = 1000) -> List[Dict
 
     return results
 
+def get_user_input_for_sources():
+    print("What sources should be used? Press Number for option.")
+    print("1. Arbeitsamt(AfA) and Adzuna")
+    print("2. Only Arbeitsamt(AfA) data")
+    source = input()
+    if source in ['1', '2']:
+        return source
+    else:
+        print('Invalid Input. Going with default Option.')
+        return '1'
 
 # ==========================================
 # 3. Execution Pipeline & Cloud Storage Upload
@@ -216,7 +226,13 @@ def main():
     unified_jobs = []
 
     # Ingestion phase
-    unified_jobs.extend(fetch_adzuna(KEYWORDS, max_total_jobs=2000))
+
+    if get_user_input_for_sources() == '1':
+        print('Sourcing from both AfA and Adzuna.')
+        unified_jobs.extend(fetch_adzuna(KEYWORDS, max_total_jobs=2000))
+    else:
+        print('Sourcing only from AfA.')
+
     unified_jobs.extend(fetch_jobsuche(KEYWORDS, max_total_jobs=1000))
 
     print(f"\nPipeline Complete. Ingested {len(unified_jobs)} total raw jobs.")
