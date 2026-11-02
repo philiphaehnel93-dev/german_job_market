@@ -1,0 +1,33 @@
+# Core GCP and Database
+
+google-cloud-storage
+
+pymongo[srv]
+
+
+
+# Data Processing & ML
+
+pandas
+
+scikit-learn
+
+
+
+# NLP & Text Extraction
+
+spacy
+
+flashtext
+
+
+
+# Geocoding
+
+pgeocode
+
+
+
+# Environment Management (for local testing)
+
+python-dotenv
