@@ -6,7 +6,9 @@ from airflow.models.param import Param
 from airflow.models import Variable
 
 from scripts.utils_raw_data import KEYWORDS, fetch_adzuna, fetch_jobsuche
-from scripts.cleaning import transfer_gcs_to_mongo
+from scripts.cleaning import clean_job_records
+from scripts.mongo_loader import insert_cleaned_jobs_to_mongo
+from google.cloud import storage
 from scripts.nlp_enrichment_task import run_nlp_enrichment_pipeline
 
 from scripts.ml_preprocessing import run_feature_engineering
@@ -59,13 +61,18 @@ def job_market_pipeline():
 
     @task
     def clean_and_load_mongo(raw_file_path: str):
-        """Downloads GCS file, cleans it, and loads into MongoDB (jobs_cleaned)."""
-        transfer_gcs_to_mongo(
-            project_id=PROJECT_ID,
-            bucket_name=BUCKET_NAME,
-            file_name=raw_file_path
-        )
-
+        """Downloads GCS file, cleans it, and loads into MongoDB."""
+        # 1. Fetch from GCS
+        client = storage.Client(project=PROJECT_ID)
+        bucket = client.bucket(BUCKET_NAME)
+        blob = bucket.blob(raw_file_path)
+        raw_jobs = json.loads(blob.download_as_string())
+        
+        # 2. Clean
+        cleaned_jobs = clean_job_records(raw_jobs)
+        
+        # 3. Load to Mongo
+        insert_cleaned_jobs_to_mongo(cleaned_jobs)
     @task
     def nlp_enrichment():
         """Pulls from jobs_cleaned, extracts tech/locations via spaCy/FlashText, saves to jobs_enriched."""
