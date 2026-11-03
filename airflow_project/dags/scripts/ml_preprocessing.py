@@ -1,11 +1,12 @@
 import os
 import pandas as pd
+from airflow.models import Variable
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 
 def run_feature_engineering():
     """Flattens enriched job records and multi-hot encodes tech stack for ML clustering."""
-    mongo_uri = os.environ.get("MONGO_URI")
+    mongo_uri = Variable.get("MONGO_URI")
     if not mongo_uri:
         raise ValueError("Error: MONGO_URI environment variable not set.")
 

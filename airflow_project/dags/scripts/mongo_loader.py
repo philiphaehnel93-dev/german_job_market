@@ -1,10 +1,11 @@
 import os
+from airflow.models import Variable
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 
 def insert_cleaned_jobs_to_mongo(cleaned_jobs: list):
     """Connects to MongoDB Atlas and inserts cleaned job records."""
-    mongo_uri = os.environ.get("MONGO_URI")
+    mongo_uri = Variable.get("MONGO_URI")
     if not mongo_uri:
         raise ValueError("Error: MONGO_URI environment variable not set.")
 

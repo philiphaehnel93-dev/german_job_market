@@ -1,12 +1,13 @@
 import os
 import pandas as pd
+from airflow.models import Variable
 from sklearn.cluster import KMeans
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 
 def run_kmeans_clustering(n_clusters: int = 5):
     """Trains a K-Means model on the feature matrix and assigns cluster labels."""
-    mongo_uri = os.environ.get("MONGO_URI")
+    mongo_uri = Variable.get("MONGO_URI")
     if not mongo_uri:
         raise ValueError("Error: MONGO_URI environment variable not set.")
 

@@ -1,6 +1,7 @@
 import os
 import time
 import concurrent.futures
+from airflow.models import Variable
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 
@@ -34,7 +35,7 @@ def process_single_job(job_doc: dict) -> dict:
 
 def run_nlp_enrichment_pipeline():
     """Airflow-compatible wrapper for MongoDB NLP enrichment."""
-    mongo_uri = os.environ.get("MONGO_URI")
+    mongo_uri = Variable.get("MONGO_URI")
     if not mongo_uri:
         raise ValueError("Error: MONGO_URI environment variable not set.")
 
@@ -61,7 +62,8 @@ def run_nlp_enrichment_pipeline():
     print(f"🚀 Starting parallel extraction for {len(raw_jobs)} jobs...")
     start_time = time.time()
     
-    with concurrent.futures.ProcessPoolExecutor(initializer=init_worker) as executor:
+    init_worker()    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         enriched_jobs = list(executor.map(process_single_job, raw_jobs, chunksize=10))
         
     end_time = time.time()

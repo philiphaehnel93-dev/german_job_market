@@ -48,7 +48,7 @@ def job_market_pipeline():
 
         if unified_jobs:
             from google.cloud import storage
-            client = storage.Client(project=PROJECT_ID)
+            client = storage.Client.from_service_account_json('/opt/airflow/dags/gcp-key.json', project=PROJECT_ID)
             bucket = client.bucket(BUCKET_NAME)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             file_name = f"raw_jobs_data_{timestamp}.json"
@@ -63,7 +63,7 @@ def job_market_pipeline():
     def clean_and_load_mongo(raw_file_path: str):
         """Downloads GCS file, cleans it, and loads into MongoDB."""
         # 1. Fetch from GCS
-        client = storage.Client(project=PROJECT_ID)
+        client = storage.Client.from_service_account_json('/opt/airflow/dags/gcp-key.json', project=PROJECT_ID)
         bucket = client.bucket(BUCKET_NAME)
         blob = bucket.blob(raw_file_path)
         raw_jobs = json.loads(blob.download_as_string())

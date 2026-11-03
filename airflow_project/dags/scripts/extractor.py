@@ -51,6 +51,7 @@ class HybridJobExtractor:
         ])
 
         # 4. Initialize pgeocode for German postal codes
+        pgeocode.STORAGE_DIR = '/tmp/pgeocode'
         self.geo_db = pgeocode.Nominatim('de')
 
     def extract_emails(self, text: str) -> List[str]:
