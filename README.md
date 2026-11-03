@@ -1,77 +1,88 @@
-# Pipeline purpose
+# Job Market Data Pipeline & Dashboard
 
 The primary goal of this data engineering pipeline is to automatically ingest, secure, and transform messy, semi-structured job market data into a highly structured format. By moving data from public APIs through an immutable Data Lake and a NoSQL staging environment, we can apply robust Natural Language Processing (NLP) to extract precise technical skills. This rigorous engineering process is required to turn raw text into clean, tabular, and vectorized features ready for machine learning (topic modeling) and advanced analytics.
 
 [Click to see tech stack](#core-tech-stack)
 
-secrets.txt provided upon request and not avalable from repository
+*Note: `secrets.txt` and `.env` files are provided upon request and not available from the repository.*
 
-# Pipeline Script Execution Order
+## Quick Start / Setup Instructions
 
-This document outlines the required execution sequence for the Job Market ETL pipeline. It is structured to support initial data exploration, text enrichment, and advanced feature engineering.
+If you are a collaborator setting up this project locally, please follow these steps to spin up the Airflow pipeline and the Streamlit dashboard.
 
-## Phase 1: Bootstrapping & Environment Setup
+1. **Add GCP Credentials:** Drop your `gcp-key.json` file directly into the `airflow_project/dags/` folder.
 
-1. **`setup_project.sh`**
-   * **Purpose:** Automates the creation of your Google Cloud Platform (GCP) project, links your billing account, and enables the Cloud Storage API.
-   * **Output:** Generates the GCP Project ID required for your `.env` file.
+2. **Configure Database Access:** Whitelist your local IP address in the MongoDB Atlas console (under Network Access) so your containers can connect to the database.
 
-2. **`setup_env.sh`**
-   * **Purpose:** Initializes the local Python environment using the `uv` package manager. Installs dependencies and downloads the `de_core_news_sm` spaCy model.
+3. **Launch the Airflow Pipeline:**
+   Navigate to the orchestration directory and initialize the Docker containers:
 
-## Phase 2: Ingestion & Cloud Storage (Root Directory)
+   ```
+   cd airflow_project
+   docker compose up airflow-init
+   docker compose up -d
+   ```
+   In the Airflow console upload to Admin/Variables the variable.json that is to be replace with a different storage solution.
 
-3. **`create_bucket.py`**
-   * **Purpose:** Authenticates with GCP and provisions the Data Lake storage bucket.
+4. **Build the Dashboard Image:**
+   Open a new terminal, navigate to the visualization folder, and build the Docker image:
 
-4. **`ingest_jobs.py`**
-   * **Purpose:** Queries APIs, aggregates the raw JSON payload, and uploads it to the GCP bucket.
+   ```
+   cd dashboard
+   docker build -t job-dashboard .
+   ```
 
-5. **`gcs_to_mongo.py`**
-   * **Purpose:** Downloads raw data from GCP, clears existing staging collections, and inserts the unformatted data into MongoDB Atlas (`jobs_raw`).
+5. **Run the Dashboard:**
+   Start the visualization container, injecting the MongoDB connection string:
 
-## Phase 3: Initial EDA (Pre-NLP)
+   ```
+   docker run -d -p 8501:8501 -e MONGO_URI="<insert_uri_here>" --name my-dashboard job-dashboard
+   ```
 
-*Note: Before writing extraction rules, it is highly recommended to explore the `jobs_raw` collection to understand data quality, missing fields, and text distributions.*
+   *You can now view the dashboard locally at `http://localhost:8501`.*
 
-6. **`job_market_eda.ipynb` (Part 1)**
-   * **Purpose:** Connect to MongoDB's raw collection to perform preliminary EDA. Analyze job title frequencies, text lengths, and identify API limitations before applying NLP.
+## Pipeline Architecture & Execution Order
 
-## Phase 4: Hybrid NLP Enrichment (`pipeline_enrichment/`)
+The project is divided into two main components: `airflow_project/` (Orchestration) and `dashboard/` (Visualization). The ETL and ML workflows are entirely automated by Apache Airflow.
 
-7. **`pipeline_enrichment/tech_dictionary.json`** *(Dependency)*
-   * **Purpose:** Static JSON containing the taxonomy of target technologies.
+### 1. Orchestration (`airflow_project/dags/`)
 
-8. **`pipeline_enrichment/extractor.py`** *(Dependency)*
-   * **Purpose:** The core NLP engine using FlashText and spaCy.
+* **`job_market_dag.py`**: The main Airflow DAG (Directed Acyclic Graph) that defines the execution order, scheduling, and dependencies of all the pipeline tasks. Once Airflow is running, this DAG automatically orchestrates the steps below.
 
-9. **`pipeline_enrichment/mongo_enrichment_pipeline.py`**
-   * **Purpose:** Pulls raw documents from MongoDB, applies text extraction across multiple CPU cores, and saves structured entities to the `jobs_enriched` collection.
+### 2. Task Scripts (`airflow_project/dags/scripts/`)
 
-## Phase 5: Flattening & Feature Engineering - TODO
+Airflow executes the following modular scripts in sequence:
 
-Before passing data to machine learning models, the nested NoSQL data must be transformed into a tabular format and converted into numerical vectors.
+* **Data Ingestion & Loading:**
+  * **`utils_raw_data.py`**: Handles API requests, data gathering, and interacting with Google Cloud Storage.
+  * **`mongo_loader.py`**: Connects to MongoDB Atlas to stage the raw, unstructured JSON payloads.
 
-10. **`pipeline_enrichment/ml_preprocessing_pipeline.py`**
-    * **Purpose:**
-      1. **Flattening:** Normalizes the nested JSON from `jobs_enriched` into a flat Pandas DataFrame.
-      2. **Feature Engineering:** Creates new structured variables and applies the Scikit-Learn `ColumnTransformer` (e.g., TF-IDF on descriptions, multi-hot encoding on skill arrays).
-      3. **Topic Modeling:** Fits unsupervised models (like NMF) to automatically discover and label job clusters.
-    * **Output:** Generates `data_vectorized.json` or writes the final engineered dataset back to the database.
+* **Cleaning & NLP Enrichment:**
+  * **`cleaning.py`**: Prepares and sanitizes the raw text data before passing it to the NLP engine.
+  * **`tech_dictionary.json`**: The static taxonomy of target technologies used for matching.
+  * **`extractor.py`**: The core NLP engine utilizing FlashText and spaCy.
+  * **`nlp_enrichment_task.py`**: The Airflow task wrapper that applies the extractor to the cleaned MongoDB documents, saving the results as structured entities.
 
-## Phase 6: Post-Enrichment EDA & Insights - TODO
+* **Feature Engineering & Machine Learning:**
+  * **`ml_preprocessing.py`**: Normalizes nested JSON into a flat structure, creates new variables, and applies vectorization (e.g., MultiLabelBinarizer for skills).
+  * **`clustering.py`**: Fits unsupervised ML models (like K-Means) to the vectorized data to automatically discover job archetypes. It evaluates the distinctness of clusters (Silhouette Score) and saves the final dataset to MongoDB.
 
-11. **`job_market_eda.ipynb` (Part 2)**
-    * **Purpose:** Now that the data is fully enriched and topic-clustered, use the notebook to visualize skill co-occurrences, map geographical densities, and analyze the distribution of the newly discovered machine learning topics.
+### 3. Visualization (`dashboard/`)
 
-## Core Tech Stack:
+* **`app.py`**: A standalone Streamlit application that reads the final, clustered data directly from MongoDB Atlas to display market segments, top dynamic skills per cluster, and statutory salary baselines.
 
-Python 3.10+ & uv: The foundation of the pipeline, utilizing uv as a blazingly fast, Rust-based package manager to ensure strict dependency isolation and reproducible execution.
+## Core Tech Stack
 
-Google Cloud Storage (GCP): Acts as the immutable Cloud Data Lake, providing a secure, historical backup of all raw API payloads before any transformation occurs.
+* **Docker & Apache Airflow:** Used for containerization, environment isolation, and orchestrating the execution dependencies of the ETL pipeline.
 
-MongoDB Atlas: A fully managed NoSQL document database. It serves as the operational staging layer, chosen specifically for its ability to handle the highly polymorphic and unpredictable JSON schemas typical of third-party job APIs.
+* **Streamlit:** The frontend Python framework used to build the interactive market segmentation dashboard.
 
-spaCy & FlashText: The hybrid NLP engine. FlashText provides lightning-fast exact string matching (Aho-Corasick automaton), while spaCy handles complex grammatical context and ambiguity in the German language.
+* **Python 3.10+ & uv:** The foundation of the pipeline, utilizing `uv` as a blazingly fast package manager.
 
-Pandas & Scikit-Learn: The feature engineering backbone used to flatten nested NoSQL documents into 2D matrices, apply TF-IDF vectorization, and perform unsupervised topic discovery.
+* **Google Cloud Storage (GCP):** Acts as the immutable Cloud Data Lake, providing a secure, historical backup of all raw API payloads.
+
+* **MongoDB Atlas:** A fully managed NoSQL document database. It serves as the operational staging layer for raw data and the serving layer for the final dashboard.
+
+* **spaCy & FlashText:** The hybrid NLP engine. FlashText provides lightning-fast exact string matching, while spaCy handles complex grammatical context.
+
+* **Pandas & Scikit-Learn:** The feature engineering backbone used to flatten nested NoSQL documents, apply vectorization, and perform unsupervised ML clustering.
