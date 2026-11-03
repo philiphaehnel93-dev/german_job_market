@@ -97,3 +97,4 @@ def job_market_pipeline():
 
     # Execution chain sequence
     loaded_mongo >> enriched_mongo >> features_built >> clustered_data
+job_market_pipeline()
