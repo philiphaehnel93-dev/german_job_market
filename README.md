@@ -38,6 +38,20 @@ If you are a collaborator setting up this project locally, please follow these s
    ```
    docker run -d -p 8501:8501 -e MONGO_URI="<insert_uri_here>" --name my-dashboard job-dashboard
    ```
+ ## Accessing the Dashboard (SSH Tunnel Required)
+
+ Due to AWS Security Group firewall restrictions, direct web access to the Streamlit dashboard is blocked. To view the dashboard locally, you must create a secure SSH tunnel to the EC2 instance.
+
+ ### Prerequisites
+ - The AWS SSH key (`.pem` file) with restricted permissions (e.g., `chmod 400 <key_name>.pem` on Mac/Linux).
+ - The public IP address of the EC2 instance.
+
+ ### Steps to Connect
+
+ **Create the tunnel:** Open a new terminal window on your local machine (do not run this on the server) and execute the following command, replacing the placeholders with your actual key path and server IP:
+   ```bash
+   ssh -i <path_to_your_key.pem> -L 8501:localhost:8501 ubuntu@<ec2_public_ip>
+   ```
 
    *You can now view the dashboard locally at `http://localhost:8501`.*
 

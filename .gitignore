@@ -243,3 +243,6 @@ eda_outputs/
 .DS_Store
 .DS_Store?
 ._*
+gcp-key.json
+airflow_project/logs/
+*.tar.gz

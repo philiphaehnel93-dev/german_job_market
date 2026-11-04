@@ -1,40 +1,41 @@
 import base64
 import json
-import string
 import urllib.parse
 import urllib.request
+import os
 from typing import Dict, List
 from airflow.models import Variable
-
-# Constants
-KEYWORDS = ["Data Engineer", "Data Scientist"]
 
 # Fetch API credentials securely from Airflow Variables
 ADZUNA_APP_ID = Variable.get("ADZUNA_APP_ID")
 ADZUNA_APP_KEY = Variable.get("ADZUNA_APP_KEY")
 
-def extract_skills(text: str) -> List[str]:
-    if not text:
-        return []
-    known_skills = [
-        "python", "aws", "docker", "terraform", "ci/cd",
-        "sql", "power_bi", "tableau", "dbt",
-        "pytorch", "machine_learning", "scikit-learn",
-        "spark", "kafka", "scala", "hadoop",
-        "snowflake", "airflow", "fastapi", "postgresql", "redis",
-        "bash", "git", "linux"
-    ]
-    known_multi_word = ["ci/cd", "machine learning", "scikit-learn"]
+def get_keywords() -> List[str]:
+    # 1. Initialize with a fallback to prevent UnboundLocalError
+    all_jobs = ["Data Engineer", "Data Scientist"]
+    
+    json_path = os.path.join(os.path.dirname(__file__), "tech_data_jobs.json")
+    
+    # 2. Safely attempt to load the JSON file
+    try:
+        if os.path.exists(json_path):
+            with open(json_path, "r") as f:
+                all_jobs = json.load(f)
+    except Exception as e:
+        print(f"Warning: Could not load JSON file. Using fallback. Error: {e}")
+        
+    # 3. Safely fetch the Airflow variable (DAG parsing can sometimes block DB calls)
+    try:
+        requested_limit = int(Variable.get("JOB_KEYWORD_LIMIT", default_var=2))
+    except Exception:
+        requested_limit = 2
+        
+    # 4. Cap the limit and slice
+    actual_limit = min(requested_limit, len(all_jobs))
+    
+    return all_jobs[:actual_limit]
 
-    text_lower = str.lower(text)
-    clean_text = text_lower.translate(str.maketrans("", "", string.punctuation))
-    words = clean_text.split()
-    skill_set = set(skill for skill in words if skill in known_skills)
-
-    for skill in known_multi_word:
-        if f" {skill} " in text_lower.replace(",", " "):
-            skill_set.add(skill)
-    return list(skill_set)
+KEYWORDS = get_keywords()
 
 def extract_seniority(title: str) -> str:
     for s in ["Junior", "Mid", "Senior", "Lead"]:
@@ -42,11 +43,12 @@ def extract_seniority(title: str) -> str:
             return s
     return "Unspecified"
 
-def fetch_adzuna(keywords: List[str], max_total_jobs: int = 2000) -> List[Dict]:
+def fetch_adzuna(keywords: List[str] = KEYWORDS, max_jobs_per_keyword: int = 1000) -> List[Dict]:
     results = []
     for keyword in keywords:
         page = 1
-        while len(results) < max_total_jobs:
+        keyword_count = 0
+        while keyword_count < max_jobs_per_keyword:
             params = {"app_id": ADZUNA_APP_ID, "app_key": ADZUNA_APP_KEY, "title_only": keyword}
             url = f"https://api.adzuna.com/v1/api/jobs/de/search/{page}?{urllib.parse.urlencode(params)}"
             try:
@@ -57,7 +59,7 @@ def fetch_adzuna(keywords: List[str], max_total_jobs: int = 2000) -> List[Dict]:
                     if not jobs:
                         break
                     for job in jobs:
-                        if len(results) >= max_total_jobs:
+                        if keyword_count >= max_jobs_per_keyword:
                             break
                         
                         title = job.get("title", "Unknown")
@@ -72,17 +74,17 @@ def fetch_adzuna(keywords: List[str], max_total_jobs: int = 2000) -> List[Dict]:
                             "is_remote": False,
                             "seniority_level": extract_seniority(title),
                             "description": description,
-                            "tech_stack": extract_skills(description)
+                            "tech_stack": []  # Let downstream NLP handle this
                         })
+                        keyword_count += 1
                 page += 1
             except Exception as e:
                 print(f"Adzuna API Error on page {page} for '{keyword}': {e}")
                 break
     return results
 
-def fetch_jobsuche(keywords: List[str], max_total_jobs: int = 1000) -> List[Dict]:
-    """Fetches jobs from AfA Jobsuche API capped at max_total_jobs."""
-    print(f"Fetching from Jobsuche (AfA) [Capped at {max_total_jobs} total]...")
+def fetch_jobsuche(keywords: List[str] = KEYWORDS, max_jobs_per_keyword: int = 1000) -> List[Dict]:
+    print(f"Fetching from Jobsuche (AfA) [Capped at {max_jobs_per_keyword} per keyword]...")
     results = []
     headers = {
         "Accept": "application/json",
@@ -92,7 +94,8 @@ def fetch_jobsuche(keywords: List[str], max_total_jobs: int = 1000) -> List[Dict
 
     for keyword in keywords:
         page = 1
-        while len(results) < max_total_jobs:
+        keyword_count = 0
+        while keyword_count < max_jobs_per_keyword:
             params = {"was": keyword, "page": page, "size": 100}
             encoded_params = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
             search_url = f"https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v6/jobs?{encoded_params}"
@@ -107,7 +110,7 @@ def fetch_jobsuche(keywords: List[str], max_total_jobs: int = 1000) -> List[Dict
                         break
 
                     for job in ergebnisliste:
-                        if len(results) >= max_total_jobs:
+                        if keyword_count >= max_jobs_per_keyword:
                             break
 
                         refnr = job.get("referenznummer")
@@ -116,7 +119,6 @@ def fetch_jobsuche(keywords: List[str], max_total_jobs: int = 1000) -> List[Dict
                         if refnr:
                             encoded_refnr = base64.b64encode(refnr.encode("utf-8")).decode("utf-8")
                             details_url = f"https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4/jobdetails/{encoded_refnr}"
-
                             try:
                                 det_req = urllib.request.Request(details_url, headers=headers)
                                 with urllib.request.urlopen(det_req) as det_res:
@@ -127,11 +129,7 @@ def fetch_jobsuche(keywords: List[str], max_total_jobs: int = 1000) -> List[Dict
 
                         title = job.get("stellenangebotsTitel", "Unknown")
                         locations = job.get("stellenlokationen", [])
-                        city = (
-                            locations[0].get("adresse", {}).get("ort", "Unknown")
-                            if locations
-                            else "Unknown"
-                        )
+                        city = locations[0].get("adresse", {}).get("ort", "Unknown") if locations else "Unknown"
 
                         results.append({
                             "origin_id": refnr,
@@ -142,17 +140,13 @@ def fetch_jobsuche(keywords: List[str], max_total_jobs: int = 1000) -> List[Dict
                             "is_remote": job.get("homeofficemoeglich", False),
                             "seniority_level": extract_seniority(title),
                             "description": description,
-                            "tech_stack": extract_skills(description)
+                            "tech_stack": []  # Let downstream NLP handle this
                         })
-
+                        keyword_count += 1
                 page += 1
 
             except Exception as e:
                 print(f"Jobsuche API Error on page {page} for '{keyword}': {e}")
                 break
-
-        if len(results) >= max_total_jobs:
-            print(f"Reached cap of {max_total_jobs} jobs for Jobsuche.")
-            break
 
     return results

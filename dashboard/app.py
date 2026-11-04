@@ -54,6 +54,10 @@ def load_job_data_from_mongo() -> pd.DataFrame:
             
         df = pd.DataFrame(records)
         
+        # Filter out rows where tech_stack is missing or is an empty list
+        if "tech_stack" in df.columns:
+            df = df[df["tech_stack"].apply(lambda x: isinstance(x, list) and len(x) > 0)]
+        
         if "location" in df.columns and "location_city" not in df.columns:
             df["location_city"] = df["location"]
             
@@ -61,6 +65,7 @@ def load_job_data_from_mongo() -> pd.DataFrame:
     except ConnectionFailure:
         st.error("Error: Failed to connect to MongoDB Atlas.")
         return pd.DataFrame()
+
 
 def compute_centroids_from_db(df: pd.DataFrame) -> pd.DataFrame:
     """Computes skill probability centroids per cluster based on live data."""

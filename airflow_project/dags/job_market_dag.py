@@ -39,11 +39,11 @@ def job_market_pipeline():
 
         if str(source_choice) == '1':
             print("Sourcing from both AfA and Adzuna.")
-            unified_jobs.extend(fetch_adzuna(KEYWORDS, max_total_jobs=2000))
+            unified_jobs.extend(fetch_jobsuche(KEYWORDS, max_jobs_per_keyword=1000))
+            unified_jobs.extend(fetch_adzuna(KEYWORDS, max_jobs_per_keyword=1000))
         else:
             print("Sourcing only from AfA.")
-
-        unified_jobs.extend(fetch_jobsuche(KEYWORDS, max_total_jobs=1000))
+            unified_jobs.extend(fetch_jobsuche(KEYWORDS, max_jobs_per_keyword=1000))
         print(f"Pipeline Complete. Ingested {len(unified_jobs)} total raw jobs.")
 
         if unified_jobs:
