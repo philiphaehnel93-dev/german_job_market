@@ -246,3 +246,8 @@ eda_outputs/
 gcp-key.json
 airflow_project/logs/
 *.tar.gz
+
+
+airflow_project/logs/
+airflow_project/config/airflow.cfg
+
