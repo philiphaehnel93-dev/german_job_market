@@ -104,6 +104,7 @@ services:
         - MONGO_URI=${MONGO_URI}
       volumes:
         - ./dashboard:/app
+        - ./airflow_project/dags/scripts/tech_jobs_dictionary.json:/app/tech_jobs_dictionary.json
       depends_on:
         - mongodb
       restart: unless-stopped
