@@ -39,6 +39,8 @@ def run_nlp_enrichment_local(input_path: str, output_path: str) -> str:
     if not raw_jobs:
         print("⚠️ No job descriptions found to process.")
         # Create an empty parquet file to prevent downstream task failures
+        directory = os.path.dirname(output_path)
+        os.makedirs(directory, exist_ok=True)
         pd.DataFrame().to_parquet(output_path, index=False)
         return output_path
 
@@ -55,6 +57,8 @@ def run_nlp_enrichment_local(input_path: str, output_path: str) -> str:
     end_time = time.time()
     print(f"✅ Extraction finished in {end_time - start_time:.2f} seconds.")
 
+    directory = os.path.dirname(output_path)
+    os.makedirs(directory, exist_ok=True)
     print(f"☁️ Saving enriched data to {output_path}...")
     enriched_df = pd.DataFrame(enriched_jobs)
     enriched_df.to_parquet(output_path, index=False)

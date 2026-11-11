@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 
 def run_feature_engineering_local(input_path: str, output_path: str) -> str:
@@ -8,6 +9,8 @@ def run_feature_engineering_local(input_path: str, output_path: str) -> str:
     if df.empty:
         print("⚠️ No enriched jobs found to process.")
         # Create an empty parquet file to prevent downstream task failures
+        directory = os.path.dirname(output_path)
+        os.makedirs(directory, exist_ok=True)
         pd.DataFrame().to_parquet(output_path, index=False)
         return output_path
 
@@ -27,7 +30,8 @@ def run_feature_engineering_local(input_path: str, output_path: str) -> str:
 
     # 3. Combine binary and numerical features into a clean feature matrix
     feature_df = pd.concat([df[['is_remote']], tech_dummies], axis=1).fillna(0)
-
+    directory = os.path.dirname(output_path)
+    os.makedirs(directory, exist_ok=True)
     print(f"☁️ Saving engineered features to {output_path}...")
     feature_df.to_parquet(output_path, index=False)
     print(f"✅ Successfully engineered and saved {len(feature_df)} feature rows.")
