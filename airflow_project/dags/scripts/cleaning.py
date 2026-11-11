@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 
 def clean_job_records(raw_jobs: list) -> list:
@@ -24,9 +25,12 @@ def clean_job_records(raw_jobs: list) -> list:
     return cleaned_jobs
 
 def clean_job_records_and_save_local(raw_jobs: list, output_path: str) -> str:
+
     cleaned_jobs = clean_job_records(raw_jobs)
 
     # Save to local Docker volume instead of Mongo
     df = pd.DataFrame(cleaned_jobs)
+    directory = os.path.dirname(output_path)
+    os.makedirs(directory, exist_ok=True)
     df.to_parquet(output_path, index=False)
     return output_path
