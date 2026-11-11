@@ -36,7 +36,7 @@ CLUSTER_LABELS: Dict[int, str] = {
 
 @st.cache_data(ttl=600)
 def load_job_data_from_mongo() -> pd.DataFrame:
-    """Fetches real clustered job data directly from MongoDB Atlas."""
+    """Fetches real clustered job data directly from MongoDB Atlas or Local DB."""
     mongo_uri = os.environ.get("MONGO_URI")
     if not mongo_uri:
         st.error("Error: MONGO_URI environment variable is not set.")
@@ -46,24 +46,26 @@ def load_job_data_from_mongo() -> pd.DataFrame:
         client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
         client.admin.command('ping')
         db = client["job_market_db"]
-        collection = db["jobs_clustered"]
-        
+
+        # CHANGED: Pointing to the correct collection used by the Airflow pipeline
+        collection = db["jobs_master"]
+
         records = list(collection.find({}, {"_id": 0}))
         if not records:
             return pd.DataFrame()
-            
+
         df = pd.DataFrame(records)
-        
+
         # Filter out rows where tech_stack is missing or is an empty list
         if "tech_stack" in df.columns:
             df = df[df["tech_stack"].apply(lambda x: isinstance(x, list) and len(x) > 0)]
-        
+
         if "location" in df.columns and "location_city" not in df.columns:
             df["location_city"] = df["location"]
-            
+
         return df
     except ConnectionFailure:
-        st.error("Error: Failed to connect to MongoDB Atlas.")
+        st.error("Error: Failed to connect to MongoDB.")
         return pd.DataFrame()
 
 
@@ -76,11 +78,11 @@ def compute_centroids_from_db(df: pd.DataFrame) -> pd.DataFrame:
     binary_matrix = mlb.fit_transform(df["tech_stack"].dropna())
     feature_df = pd.DataFrame(binary_matrix, columns=mlb.classes_, index=df.dropna(subset=["tech_stack"]).index)
     feature_df.columns = [str(col) for col in feature_df.columns]
-    
+
     feature_df["cluster_id"] = df.loc[feature_df.index, "cluster_id"]
     centroids = feature_df.groupby("cluster_id").mean()
     centroids.index = [f"C{idx}: {CLUSTER_LABELS.get(idx, 'Archetype')}" for idx in centroids.index]
-    
+
     return centroids
 
 # -----------------------------------------------------------------------------
@@ -98,7 +100,8 @@ st.sidebar.subheader("Job Postings Filters")
 all_data = load_job_data_from_mongo()
 
 if all_data.empty:
-    st.warning("⚠️ No data found in MongoDB `jobs_clustered`. Run your Airflow pipeline to populate the database.")
+    # CHANGED: Updated the warning message to reflect the correct collection
+    st.warning("⚠️ No data found in MongoDB `jobs_master`. Run your Airflow pipeline to populate the database.")
 else:
     available_seniorities = list(all_data["seniority_level"].unique()) if "seniority_level" in all_data.columns else ["Unspecified"]
     selected_seniority = st.sidebar.multiselect("Seniority Level", options=available_seniorities, default=available_seniorities)
