@@ -1,3 +1,5 @@
+import pandas as pd
+
 def clean_job_records(raw_jobs: list) -> list:
     """Cleans, normalizes, and standardizes raw job dictionaries."""
     cleaned_jobs = []
@@ -18,5 +20,13 @@ def clean_job_records(raw_jobs: list) -> list:
             "tech_stack": job.get("tech_stack", [])
         }
         cleaned_jobs.append(cleaned_job)
-        
+
     return cleaned_jobs
+
+def clean_job_records_and_save_local(raw_jobs: list, output_path: str) -> str:
+    cleaned_jobs = clean_job_records(raw_jobs)
+
+    # Save to local Docker volume instead of Mongo
+    df = pd.DataFrame(cleaned_jobs)
+    df.to_parquet(output_path, index=False)
+    return output_path

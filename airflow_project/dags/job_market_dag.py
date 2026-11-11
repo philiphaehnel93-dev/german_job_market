@@ -4,17 +4,15 @@ from datetime import datetime
 from airflow.decorators import dag, task
 from airflow.models.param import Param
 from airflow.models import Variable
+from google.cloud import storage
 
 from scripts.utils_raw_data import KEYWORDS, fetch_adzuna, fetch_jobsuche
-from scripts.cleaning import clean_job_records
-from scripts.mongo_loader import insert_cleaned_jobs_to_mongo
-from google.cloud import storage
-from scripts.nlp_enrichment_task import run_nlp_enrichment_pipeline
+from scripts.cleaning import clean_job_records_and_save_local
+from scripts.nlp_enrichment_task import run_nlp_enrichment_local
+from scripts.ml_preprocessing import run_feature_engineering_local
+from scripts.clustering import run_kmeans_clustering_and_upsert_mongo
 
-from scripts.ml_preprocessing import run_feature_engineering
-from scripts.clustering import run_kmeans_clustering
-
-# Cloud Configuration fetched from Airflow Variables
+# Cloud Configuration
 PROJECT_ID = Variable.get("GCP_PROJECT_ID")
 PROJECT_NUMBER = Variable.get("GCP_PROJECT_NUMBER")
 BUCKET_NAME = Variable.get("GCP_BUCKET_NAME")
@@ -44,10 +42,10 @@ def job_market_pipeline():
         else:
             print("Sourcing only from AfA.")
             unified_jobs.extend(fetch_jobsuche(KEYWORDS, max_jobs_per_keyword=1000))
+
         print(f"Pipeline Complete. Ingested {len(unified_jobs)} total raw jobs.")
 
         if unified_jobs:
-            from google.cloud import storage
             client = storage.Client.from_service_account_json('/opt/airflow/dags/gcp-key.json', project=PROJECT_ID)
             bucket = client.bucket(BUCKET_NAME)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -60,41 +58,38 @@ def job_market_pipeline():
             return file_name
 
     @task
-    def clean_and_load_mongo(raw_file_path: str):
-        """Downloads GCS file, cleans it, and loads into MongoDB."""
-        # 1. Fetch from GCS
+    def clean_data(raw_file_name: str):
+        """Downloads GCS file, cleans it, and saves to LOCAL Docker volume."""
         client = storage.Client.from_service_account_json('/opt/airflow/dags/gcp-key.json', project=PROJECT_ID)
         bucket = client.bucket(BUCKET_NAME)
-        blob = bucket.blob(raw_file_path)
+        blob = bucket.blob(raw_file_name)
         raw_jobs = json.loads(blob.download_as_string())
-        
-        # 2. Clean
-        cleaned_jobs = clean_job_records(raw_jobs)
-        
-        # 3. Load to Mongo
-        insert_cleaned_jobs_to_mongo(cleaned_jobs)
-    @task
-    def nlp_enrichment():
-        """Pulls from jobs_cleaned, extracts tech/locations via spaCy/FlashText, saves to jobs_enriched."""
-        run_nlp_enrichment_pipeline()
+
+        cleaned_file_path = clean_job_records_and_save_local(raw_jobs, "/app/clean_data/cleaned_temp.parquet")
+        return cleaned_file_path
 
     @task
-    def ml_feature_engineering():
-        """Prepares numerical feature matrices from enriched records."""
-        run_feature_engineering()
+    def nlp_enrichment(cleaned_file_path: str):
+        """Loads local cleaned data, extracts tech/locations, saves enriched file locally."""
+        enriched_file_path = run_nlp_enrichment_local(cleaned_file_path, "/app/clean_data/enriched_temp.parquet")
+        return enriched_file_path
 
     @task
-    def ml_clustering():
-        """Applies K-Means clustering and stores final tagged records."""
-        run_kmeans_clustering(n_clusters=5)
+    def ml_feature_engineering(enriched_file_path: str):
+        """Prepares numerical feature matrices from local enriched records."""
+        features_file_path = run_feature_engineering_local(enriched_file_path, "/app/clean_data/features_temp.parquet")
+        return features_file_path
 
-    # Define full DAG task dependencies
+    @task
+    def ml_clustering_and_load(features_file_path: str, enriched_file_path: str):
+        """Applies K-Means clustering and performs final UPSERT to local MongoDB."""
+        run_kmeans_clustering_and_upsert_mongo(features_file_path, enriched_file_path, n_clusters=5)
+
+    # Define full DAG task dependencies and pass file paths via XComs
     raw_file = ingest_jobs()
-    loaded_mongo = clean_and_load_mongo(raw_file)
-    enriched_mongo = nlp_enrichment()
-    features_built = ml_feature_engineering()
-    clustered_data = ml_clustering()
+    cleaned_file = clean_data(raw_file)
+    enriched_file = nlp_enrichment(cleaned_file)
+    features_file = ml_feature_engineering(enriched_file)
+    ml_clustering_and_load(features_file, enriched_file)
 
-    # Execution chain sequence
-    loaded_mongo >> enriched_mongo >> features_built >> clustered_data
 job_market_pipeline()
