@@ -1,5 +1,7 @@
 x-airflow-common: &airflow-common
-  build: .
+  build: ./airflow_project
+  env_file:                  # <-- ADD THIS
+    - .env
   environment: &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
@@ -13,15 +15,17 @@ x-airflow-common: &airflow-common
     AIRFLOW__SMTP__SMTP_PASSWORD: "cfsrvkongsobheta"
     AIRFLOW__SMTP__SMTP_MAIL_FROM: "de.airflow@gmail.com"
     _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:- scikit-learn}
+    MONGO_URI: "mongodb://admin:admin@mongodb:27017/"
   volumes:
-    - ./dags:/opt/airflow/dags
-    - ./logs:/opt/airflow/logs
-    - ./plugins:/opt/airflow/plugins
+    # CHANGED: Added './airflow/' prefix since docker-compose is now one level up
+    - ./airflow_project/dags:/opt/airflow/dags
+    - ./airflow_project/logs:/opt/airflow/logs
+    - ./airflow_project/plugins:/opt/airflow/plugins
     - type: bind
-      source: ./clean_data
+      source: ./airflow_project/clean_data
       target: /app/clean_data
     - type: bind
-      source: ./raw_files
+      source: ./airflow_project/raw_files
       target: /app/raw_files
   user: "1000:0"
   depends_on:
@@ -29,6 +33,18 @@ x-airflow-common: &airflow-common
       condition: service_healthy
 
 services:
+  mongodb:
+    image: mongo:6.0
+    container_name: local_mongo_db
+    restart: always
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
   postgres:
     image: postgres:13
     environment:
@@ -81,3 +97,4 @@ services:
 
 volumes:
   postgres-db-volume:
+  mongo_data:

@@ -1,52 +1,45 @@
 import os
+import json
 import pandas as pd
-from airflow.models import Variable
+from pymongo import MongoClient, UpdateOne
 from sklearn.cluster import KMeans
-from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure
 
-def run_kmeans_clustering(n_clusters: int = 5):
-    """Trains a K-Means model on the feature matrix and assigns cluster labels."""
-    mongo_uri = Variable.get("MONGO_URI")
-    if not mongo_uri:
-        raise ValueError("Error: MONGO_URI environment variable not set.")
+def run_kmeans_clustering_and_upsert_mongo(features_path: str, enriched_path: str, n_clusters: int = 5):
+    """Runs K-Means clustering and performs a direct UPSERT to the local MongoDB container."""
+    print(f"📥 Loading features from {features_path} and enriched records from {enriched_path}...")
 
-    db_name = "job_market_db"
-    feature_collection = "jobs_features"
-    enriched_collection = "jobs_enriched"
-    target_collection = "jobs_clustered"
+    features_df = pd.read_parquet(features_path)
+    enriched_df = pd.read_parquet(enriched_path)
 
-    print("🚀 Connecting to MongoDB for K-Means clustering...")
-    try:
-        client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
-        client.admin.command('ping')
-    except ConnectionFailure as e:
-        raise ConnectionError(f"Failed to connect to MongoDB: {e}")
-
-    db = client[db_name]
-    
-    # Fetch feature vectors and original enriched job documents
-    features = list(db[feature_collection].find({}, {"_id": 0}))
-    enriched_jobs = list(db[enriched_collection].find({}, {"_id": 0}))
-
-    if not features or not enriched_jobs:
-        print("⚠️ Missing feature records or enriched jobs for clustering.")
+    if features_df.empty or enriched_df.empty:
+        print("⚠️ No data available for clustering. Skipping.")
         return
 
-    X = pd.DataFrame(features)
-    
-    print(f"🤖 Training K-Means model with {n_clusters} clusters on {len(X)} samples...")
+    print(f"🧠 Training K-Means model with {n_clusters} clusters...")
     kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-    cluster_labels = kmeans.fit_predict(X)
+    enriched_df['cluster_id'] = kmeans.fit_predict(features_df)
 
-    # Attach the assigned cluster ID back to each original job document
-    clustered_jobs = []
-    for job, label in zip(enriched_jobs, cluster_labels):
-        job["cluster_id"] = int(label)
-        clustered_jobs.append(job)
+    records = json.loads(enriched_df.to_json(orient="records"))
 
-    # Save final dataset to MongoDB
-    db[target_collection].drop()
-    if clustered_jobs:
-        db[target_collection].insert_many(clustered_jobs)
-        print(f"✅ Successfully clustered and saved {len(clustered_jobs)} jobs into '{target_collection}'.")
+    print("💾 Connecting directly to local MongoDB...")
+    # 'local_mongo_db' is the container name on your Docker network
+    mongo_uri = os.getenv("MONGO_URI", "mongodb://admin:admin@local_mongo_db:27017/")
+
+    # serverSelectionTimeoutMS=5000 forces PyMongo to throw an error after 5 seconds if it can't find the DB
+    client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+    db = client["job_market_db"]
+    collection = db["jobs_master"]
+
+    operations = []
+    for job in records:
+        if "origin_id" in job:
+            operations.append(
+                UpdateOne({"origin_id": job["origin_id"]}, {"$set": job}, upsert=True)
+            )
+
+    if operations:
+        print("🚀 Executing bulk upsert...")
+        result = collection.bulk_write(operations)
+        print(f"✅ Upsert complete! Matched: {result.matched_count}, Modified: {result.modified_count}, Upserted: {result.upserted_count}")
+    else:
+        print("⚠️ No valid operations to perform.")
