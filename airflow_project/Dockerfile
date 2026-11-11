@@ -16,6 +16,7 @@ COPY requirements.txt /requirements.txt
 # Upgrade pip and install requirements
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir "numpy<2.0.0" && \
+    pip install --no-cache-dir 'pydantic[email]' && \
     pip install --no-cache-dir -r /requirements.txt
 
 # Download the spaCy model

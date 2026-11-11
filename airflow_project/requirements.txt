@@ -26,7 +26,10 @@ flashtext
 
 pgeocode
 
+#FastAPI
 
+email-validator
+fastapi
 
 # Environment Management (for local testing)
 
