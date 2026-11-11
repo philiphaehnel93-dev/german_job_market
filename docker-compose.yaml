@@ -15,7 +15,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__SMTP__SMTP_PASSWORD: "cfsrvkongsobheta"
     AIRFLOW__SMTP__SMTP_MAIL_FROM: "de.airflow@gmail.com"
     _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:- scikit-learn}
-    MONGO_URI: "mongodb://admin:admin@mongodb:27017/"
+    MONGO_URI: ${MONGO_URI}
   volumes:
     # CHANGED: Added './airflow/' prefix since docker-compose is now one level up
     - ./airflow_project/dags:/opt/airflow/dags
@@ -38,8 +38,8 @@ services:
     container_name: local_mongo_db
     restart: always
     environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: admin
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
     ports:
       - "27017:27017"
     volumes:
@@ -94,7 +94,25 @@ services:
       _AIRFLOW_WWW_USER_CREATE: "true"
       _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
       _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
-
+  fastapi-service:
+    build: ./fastapi_app
+    container_name: airflow-fastapi
+    ports:
+      - "8081:8081"
+    environment:
+      AIRFLOW_BASE_URL: "http://airflow-webserver:8080/api/v1"
+      AIRFLOW_USER: ${AIRFLOW_USER}
+      AIRFLOW_PASSWORD: ${AIRFLOW_PASSWORD}
+      MONGO_URI: ${MONGO_URI}
+      MONGO_HOST: "mongodb"
+      MONGO_PORT: "27017"
+      MONGO_DB_NAME: ${MONGO_DB_NAME}
+    volumes:
+      - ./fastapi_app:/app
+    depends_on:
+      - mongodb
+    command: uvicorn main:app --host 0.0.0.0 --port 8081 --reload
+    restart: always
   dashboard:
       build: ./dashboard
       container_name: job_market_dashboard
