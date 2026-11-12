@@ -3,10 +3,12 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, Field
+
+# Import your Pydantic models from schemas.py
+from schemas import AirflowPayload, TriggerJobRequest, ClusterGetResponse, SaveResponse, ErrorResponse
 
 app = FastAPI(title="Airflow & MongoDB Bridge API")
 
@@ -35,17 +37,6 @@ db = mongo_client[MONGO_DB_NAME]
 jobs_collection = db["job_runs"]
 clustered_collection = db["jobs_master"]
 
-class TriggerJobRequest(BaseModel):
-    job_name: str
-    conf: Optional[Dict[str, Any]] = {}
-
-class AirflowPayload(BaseModel):
-    dag_id: str = Field(..., description="Airflow DAG ID")
-    run_id: str = Field(..., description="Airflow Run ID")
-    task_id: Optional[str] = Field(None, description="Airflow Task ID")
-    database: str = Field(default="airflow_data")
-    collection: str = Field(default="task_outputs")
-    data: Dict[str, Any] = Field(..., description="JSON payload from Airflow")
 
 def serialize_doc(doc: dict) -> dict:
     """Convert MongoDB ObjectId to string so FastAPI can return JSON."""
@@ -55,7 +46,7 @@ def serialize_doc(doc: dict) -> dict:
 
 @app.get("/")
 async def root():
-    return {"message": "Hello World from FastAPI plugin"}
+    return {"message": "Hello World from FastAPI, use /docs for endpoints"}
 
 # 1. Combined Health Check (FastAPI + Airflow + MongoDB)
 @app.get("/health")
@@ -141,7 +132,7 @@ async def list_stored_jobs(limit: int = 20):
     jobs = await cursor.to_list(length=limit)
     return {"jobs": jobs}
 
-@app.get("/jobs/clustered")
+@app.get("/jobs/clustered", response_model=ClusterGetResponse,)
 async def get_clustered_jobs(
     cluster_id: Optional[int] = Query(None, description="Filter by cluster ID"),
     limit: int = Query(100, ge=1, le=1000, description="Max records to return"),
@@ -158,7 +149,15 @@ async def get_clustered_jobs(
         "items": [serialize_doc(doc) for doc in docs],
     }
 
-@app.post("/mongo/save", status_code=201)
+@app.post("/mongo/save", status_code=status.HTTP_201_CREATED,
+    response_model=SaveResponse,
+    summary="Save Airflow task output to MongoDB",
+    tags=["MongoDB Ingestion"],
+    responses={
+        201: {"description": "Document successfully stored in MongoDB."},
+        422: {"description": "Validation Error — missing or invalid Airflow payload fields."},
+        500: {"model": ErrorResponse, "description": "Database connection or write failure."}
+    })
 async def save_to_mongo(payload: AirflowPayload):
     try:
         db = client[payload.database]
@@ -175,7 +174,8 @@ async def save_to_mongo(payload: AirflowPayload):
         result = await collection.insert_one(document)
         return {
             "status": "inserted",
-            "id": str(result.inserted_id)
+            "id": str(result.inserted_id),
+            "collection": payload.collection
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"MongoDB write failed: {str(e)}")
