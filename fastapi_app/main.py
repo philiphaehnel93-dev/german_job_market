@@ -6,7 +6,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 app = FastAPI(title="Airflow & MongoDB Bridge API")
 
@@ -33,17 +33,29 @@ MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "job_market_db")
 mongo_client = AsyncIOMotorClient(MONGO_URI)
 db = mongo_client[MONGO_DB_NAME]
 jobs_collection = db["job_runs"]
-clustered_collection = db["jobs_clustered"]
+clustered_collection = db["jobs_master"]
 
 class TriggerJobRequest(BaseModel):
     job_name: str
     conf: Optional[Dict[str, Any]] = {}
+
+class AirflowPayload(BaseModel):
+    dag_id: str = Field(..., description="Airflow DAG ID")
+    run_id: str = Field(..., description="Airflow Run ID")
+    task_id: Optional[str] = Field(None, description="Airflow Task ID")
+    database: str = Field(default="airflow_data")
+    collection: str = Field(default="task_outputs")
+    data: Dict[str, Any] = Field(..., description="JSON payload from Airflow")
 
 def serialize_doc(doc: dict) -> dict:
     """Convert MongoDB ObjectId to string so FastAPI can return JSON."""
     if "_id" in doc:
         doc["_id"] = str(doc["_id"])
     return doc
+
+@app.get("/")
+async def root():
+    return {"message": "Hello World from FastAPI plugin"}
 
 # 1. Combined Health Check (FastAPI + Airflow + MongoDB)
 @app.get("/health")
@@ -71,8 +83,8 @@ async def health_check():
 
 
 # 2. Trigger an Airflow DAG & Save Metadata in MongoDB
-@app.post("/jobs/{dag_id}/trigger")
-async def trigger_and_store_job(dag_id: str, payload: TriggerJobRequest):
+@app.post("/jobs/{dag_id}/queue")
+async def queue_and_store_job(dag_id: str, payload: TriggerJobRequest):
     async with httpx.AsyncClient(auth=AIRFLOW_AUTH) as client:
         resp = await client.post(
             f"{AIRFLOW_BASE_URL}/dags/{dag_id}/dagRuns",
@@ -101,6 +113,26 @@ async def trigger_and_store_job(dag_id: str, payload: TriggerJobRequest):
         "state": airflow_run["state"],
     }
 
+@app.post("/jobs/{dag_id}/trigger")
+def trigger_pipeline(dag_id: str, conf: dict = {}):
+    try:
+        # trigger_dag automatically handles run_type, logical_date, and state='queued'
+        dag_run = trigger_dag(
+            dag_id=dag_id,
+            run_id=f"manual__{timezone.utcnow().isoformat()}",
+            conf=conf,
+            execution_date=timezone.utcnow(),
+            replace_microseconds=False,
+        )
+        return {
+            "status": "triggered",
+            "dag_id": dag_id,
+            "run_id": dag_run.run_id,
+            "state": dag_run.state
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 # 3. Fetch Recent Jobs from MongoDB
 @app.get("/jobs")
@@ -125,3 +157,25 @@ async def get_clustered_jobs(
         "count": len(docs),
         "items": [serialize_doc(doc) for doc in docs],
     }
+
+@app.post("/mongo/save", status_code=201)
+async def save_to_mongo(payload: AirflowPayload):
+    try:
+        db = client[payload.database]
+        collection = db[payload.collection]
+
+        document = {
+            "dag_id": payload.dag_id,
+            "run_id": payload.run_id,
+            "task_id": payload.task_id,
+            "saved_at": datetime.now(timezone.utc),
+            "data": payload.data
+        }
+
+        result = await collection.insert_one(document)
+        return {
+            "status": "inserted",
+            "id": str(result.inserted_id)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"MongoDB write failed: {str(e)}")
