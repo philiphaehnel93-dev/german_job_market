@@ -160,7 +160,7 @@ async def get_clustered_jobs(
     })
 async def save_to_mongo(payload: AirflowPayload):
     try:
-        db = client[payload.database]
+        db = mongo_client[payload.database]
         collection = db[payload.collection]
 
         document = {
