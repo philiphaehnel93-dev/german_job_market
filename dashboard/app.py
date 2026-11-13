@@ -6,6 +6,7 @@ Analyzes German Tech Roles using Entgeldatlas Baselines and MongoDB Clustered Da
 from typing import Dict, List, Tuple
 import os
 import json
+import requests
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -78,6 +79,52 @@ def load_job_data_from_mongo() -> pd.DataFrame:
         st.error("Error: Failed to connect to MongoDB.")
         return pd.DataFrame()
 
+def fetch_job_data_from_over_fastapi() -> pd.DataFrame:
+    """Fetches clustered job data in MongoDB over FastApi Endpoint."""
+    SERVICE_TOKEN = os.getenv("STREAMLIT_JWT")
+
+    if not SERVICE_TOKEN:
+        st.error("Missing STREAMLIT_JWT environment variable.")
+        return pd.DataFrame()
+    
+    headers = {
+            "Authorization": f"Bearer {SERVICE_TOKEN}"
+        }
+
+    try:        
+        # Request data from the internal Docker network URL
+        response = requests.get(
+            "http://fastapi-service:8081/api/v1/jobs",
+            headers=headers,
+            timeout=10,
+        )
+        print("RESPONSE STATUS:", response.status_code)
+
+        if response.status_code != 200:
+            st.error(f"API Error ({response.status_code}): {response.text}")
+            return pd.DataFrame()
+
+        st.success("Successfully authenticated!")
+
+        # Adjust ["data"] if your FastAPI endpoint returns a raw list directly
+        payload = response.json()
+        records = payload.get("data", payload) if isinstance(payload, dict) else payload
+
+        if not records:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(records)
+        if "tech_stack" in df.columns:
+            df = df[df["tech_stack"].apply(lambda x: isinstance(x, list) and len(x) > 0)]
+        if "location" in df.columns and "location_city" not in df.columns:
+            df["location_city"] = df["location"]
+
+        return df
+    except requests.exceptions.RequestException as exc:
+        # Catches ConnectionError, Timeout, InvalidURL, etc.
+        st.error(f"Failed to reach FastAPI service: {exc}")
+        return pd.DataFrame()
+
 def compute_centroids_from_db(df: pd.DataFrame) -> pd.DataFrame:
     """Computes skill probability centroids per cluster based on live data."""
     if "tech_stack" not in df.columns or "cluster_id" not in df.columns:
@@ -109,6 +156,9 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("Job Postings Filters")
 
 all_data = load_job_data_from_mongo()
+
+if st.button("Fetch Secure Data"):
+    all_data = fetch_job_data_from_over_fastapi()
 
 if all_data.empty:
     st.warning("⚠️ No data found in MongoDB `jobs_master`. Run your Airflow pipeline to populate the database.")

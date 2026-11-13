@@ -1,11 +1,14 @@
 import os
+import jwt
 from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import FastAPI, Depends, HTTPException, Query, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import MongoClient
 
 # Import your Pydantic models from schemas.py
 from schemas import AirflowPayload, ClusterGetResponse, SaveResponse, ErrorResponse
@@ -34,6 +37,7 @@ MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "job_market_db")
 
 mongo_client = AsyncIOMotorClient(MONGO_URI)
 db = mongo_client[MONGO_DB_NAME]
+jobs_collection = db["job_runs"]
 clustered_collection = db["jobs_master"]
 
 
@@ -71,6 +75,66 @@ async def health_check():
         "mongodb": mongo_status,
     }
 
+
+# 2. Trigger an Airflow DAG & Save Metadata in MongoDB
+@app.post("/jobs/{dag_id}/queue")
+async def queue_and_store_job(dag_id: str, payload: TriggerJobRequest):
+    async with httpx.AsyncClient(auth=AIRFLOW_AUTH) as client:
+        resp = await client.post(
+            f"{AIRFLOW_BASE_URL}/dags/{dag_id}/dagRuns",
+            json={"conf": payload.conf},
+        )
+        if resp.status_code not in (200, 201):
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+        airflow_run = resp.json()
+
+    # Store tracking document in MongoDB
+    job_doc = {
+        "job_name": payload.job_name,
+        "dag_id": dag_id,
+        "dag_run_id": airflow_run["dag_run_id"],
+        "state": airflow_run["state"],
+        "conf": payload.conf,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    insert_result = await jobs_collection.insert_one(job_doc)
+
+    return {
+        "mongo_id": str(insert_result.inserted_id),
+        "dag_id": dag_id,
+        "dag_run_id": airflow_run["dag_run_id"],
+        "state": airflow_run["state"],
+    }
+
+@app.post("/jobs/{dag_id}/trigger")
+def trigger_pipeline(dag_id: str, conf: dict = {}):
+    try:
+        # trigger_dag automatically handles run_type, logical_date, and state='queued'
+        dag_run = trigger_dag(
+            dag_id=dag_id,
+            run_id=f"manual__{timezone.utcnow().isoformat()}",
+            conf=conf,
+            execution_date=timezone.utcnow(),
+            replace_microseconds=False,
+        )
+        return {
+            "status": "triggered",
+            "dag_id": dag_id,
+            "run_id": dag_run.run_id,
+            "state": dag_run.state
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# 3. Fetch Recent Jobs from MongoDB
+@app.get("/jobs")
+async def list_stored_jobs(limit: int = 20):
+    cursor = jobs_collection.find({}, {"_id": 0}).sort("created_at", -1).limit(limit)
+    jobs = await cursor.to_list(length=limit)
+    return {"jobs": jobs}
+
 @app.get("/jobs/clustered", response_model=ClusterGetResponse,)
 async def get_clustered_jobs(
     cluster_id: Optional[int] = Query(None, description="Filter by cluster ID"),
@@ -99,7 +163,7 @@ async def get_clustered_jobs(
     })
 async def save_to_mongo(payload: AirflowPayload):
     try:
-        db = mongo_client[payload.database]
+        db = client[payload.database]
         collection = db[payload.collection]
 
         document = {
@@ -118,3 +182,45 @@ async def save_to_mongo(payload: AirflowPayload):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"MongoDB write failed: {str(e)}")
+
+
+security = HTTPBearer()
+
+# In production, load this from os.getenv("API_SECRET_KEY")
+SECRET_KEY = os.getenv("API_SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("API_SECRET_KEY environment variable is not set!")
+
+def verify_jwt(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Dependency to validate the JWT in the Authorization header."""
+    try:
+        # FastAPI extracts the raw token from "Bearer <token>"
+        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=["HS256"])
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+# The Depends(verify_jwt) locks this endpoint
+@app.get("/api/v1/jobs")
+async def get_jobs(
+    token_payload: dict = Depends(verify_jwt),
+    cluster_id: Optional[int] = Query(None, description="Filter by cluster ID"),
+    limit: int = Query(5000, ge=1, le=10000, description="Max records to return"),
+):
+    # If code reaches here, the token is valid.
+    
+    query = {}
+    if cluster_id is not None:
+        query["cluster_id"] = cluster_id
+
+    cursor = clustered_collection.find(query).limit(limit)
+    docs = await cursor.to_list(length=limit)
+
+    return {
+        "message": "Authentication successful", 
+        "service": token_payload.get("service"),
+        "count": len(docs),
+        "data": [serialize_doc(doc) for doc in docs]
+    }
