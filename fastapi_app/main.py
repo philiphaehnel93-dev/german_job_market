@@ -1,6 +1,6 @@
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, status
@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 
 # Import your Pydantic models from schemas.py
-from schemas import AirflowPayload, TriggerJobRequest, ClusterGetResponse, SaveResponse, ErrorResponse
+from schemas import AirflowPayload, ClusterGetResponse, SaveResponse, ErrorResponse
 
 app = FastAPI(title="Airflow & MongoDB Bridge API")
 

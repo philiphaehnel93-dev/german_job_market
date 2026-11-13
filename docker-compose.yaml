@@ -1,23 +1,8 @@
 x-airflow-common: &airflow-common
   build: ./airflow_project
-  env_file:                  # <-- ADD THIS
+  env_file:
     - .env
-  environment: &airflow-common-env
-    AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
-    AIRFLOW__CORE__FERNET_KEY: ""
-    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
-    AIRFLOW__CORE__LOAD_EXAMPLES: "true"
-    AIRFLOW__API__AUTH_BACKEND: "airflow.api.auth.backend.basic_auth"
-    AIRFLOW__SMTP__SMTP_HOST: "smtp.gmail.com"
-    AIRFLOW__SMTP__SMTP_PORT: 587
-    AIRFLOW__SMTP__SMTP_USER: "de.airflow@gmail.com"
-    AIRFLOW__SMTP__SMTP_PASSWORD: "cfsrvkongsobheta"
-    AIRFLOW__SMTP__SMTP_MAIL_FROM: "de.airflow@gmail.com"
-    _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:- scikit-learn}
-    MONGO_URI: ${MONGO_URI}
   volumes:
-    # CHANGED: Added './airflow/' prefix since docker-compose is now one level up
     - ./airflow_project/dags:/opt/airflow/dags
     - ./airflow_project/logs:/opt/airflow/logs
     - ./airflow_project/plugins:/opt/airflow/plugins
@@ -44,7 +29,6 @@ services:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
-
   postgres:
     image: postgres:13
     environment:
@@ -89,7 +73,6 @@ services:
     <<: *airflow-common
     command: version
     environment:
-      <<: *airflow-common-env
       _AIRFLOW_DB_UPGRADE: "true"
       _AIRFLOW_WWW_USER_CREATE: "true"
       _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
@@ -99,6 +82,8 @@ services:
     container_name: airflow-fastapi
     ports:
       - "8081:8081"
+    env_file:
+    - .env
     environment:
       AIRFLOW_BASE_URL: "http://airflow-webserver:8080/api/v1"
       AIRFLOW_USER: ${AIRFLOW_USER}
@@ -118,8 +103,8 @@ services:
       container_name: job_market_dashboard
       ports:
         - "8501:8501"
-      environment:
-        - MONGO_URI=${MONGO_URI}
+      env_file:
+      - .env
       volumes:
         - ./dashboard:/app
         - ./airflow_project/dags/scripts/tech_jobs_dictionary.json:/app/tech_jobs_dictionary.json

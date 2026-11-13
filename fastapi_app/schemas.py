@@ -35,14 +35,10 @@ class AirflowPayload(BaseModel):
         description="Name of the Collection.",
         examples=["clustered_collection"])
 
-class TriggerJobRequest(BaseModel):
-    job_name: str
-    conf: Optional[Dict[str, Any]] = {}
-
 # --- Response Schemas ---
 
 class ClusterGetResponse(BaseModel):
-    count: int = Field(..., examples=["1527"])
+    count: int = Field(..., examples=[1527])
     items: list = Field(
         ...,
         description="List of MongoDB Docs",
