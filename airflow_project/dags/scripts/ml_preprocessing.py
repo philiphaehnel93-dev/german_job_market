@@ -1,4 +1,6 @@
 import os
+import requests
+from airflow.operators.python import get_current_context
 import pandas as pd
 
 def run_feature_engineering_local(input_path: str, output_path: str) -> str:
@@ -36,4 +38,26 @@ def run_feature_engineering_local(input_path: str, output_path: str) -> str:
     feature_df.to_parquet(output_path, index=False)
     print(f"✅ Successfully engineered and saved {len(feature_df)} feature rows.")
 
+    # Get Airflow context to log metrics to FastAPI endpoint
+    context = get_current_context()
+    run_id = context['dag_run'].run_id
+    task_id = context['task'].task_id
+    try:
+            requests.post(
+                "http://fastapi-service:8081/mongo/save",
+                json={
+                    "dag_id": "german_job_market_pipeline",
+                    "run_id": run_id,
+                    "task_id": task_id,
+                    "database": "airflow_data",
+                    "collection": "task_outputs",
+                    "data": {
+                        "status": "success",
+                        "rows_processed": len(feature_df)
+                    }
+                },
+                timeout=5
+            )
+    except Exception as e:
+        print(f"Failed to log metrics: {e}")
     return output_path

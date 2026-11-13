@@ -2,6 +2,8 @@ import os
 import time
 import concurrent.futures
 import pandas as pd
+import requests
+from airflow.operators.python import get_current_context
 
 from scripts.extractor import HybridJobExtractor
 
@@ -64,4 +66,28 @@ def run_nlp_enrichment_local(input_path: str, output_path: str) -> str:
     enriched_df.to_parquet(output_path, index=False)
     print(f"✅ Successfully saved {len(enriched_jobs)} enriched records.")
 
+    # Get Airflow context to log metrics to FastAPI endpoint
+    context = get_current_context()
+    run_id = context['dag_run'].run_id
+    task_id = context['task'].task_id
+
+    try:
+        requests.post(
+            "http://fastapi-service:8081/mongo/save",
+            json={
+                "dag_id": "german_job_market_pipeline",
+                "run_id": run_id,
+                "task_id": task_id,
+                "database": "airflow_data",
+                "collection": "task_outputs",
+                "data": {
+                    "status": "success",
+                    "rows_processed": len(enriched_jobs),
+                    "duration_seconds": round(end_time - start_time, 2)
+                }
+            },
+            timeout=5
+        )
+    except Exception as e:
+        print(f"Failed to log metrics: {e}")
     return output_path
