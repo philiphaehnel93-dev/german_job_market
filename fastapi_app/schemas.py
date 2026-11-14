@@ -39,7 +39,7 @@ class AirflowPayload(BaseModel):
 
 class ClusterGetResponse(BaseModel):
     count: int = Field(..., examples=[1527])
-    items: list = Field(
+    items: List[Dict[str, Any]] = Field(
         ...,
         description="List of MongoDB Docs",
         examples=[["doc1", "doc2", "doc3"]]
