@@ -47,3 +47,12 @@ class MetricsSaveResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     detail: str = Field(..., examples=["MongoDB connection timed out"])
+
+class PipelineMetricPayload(BaseModel):
+    dag_id: str
+    run_id: str
+    task_id: str
+    status: str
+    rows_processed: int = 0
+    duration_seconds: float = 0.0
+    execution_date: str

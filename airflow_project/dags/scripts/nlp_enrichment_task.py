@@ -57,7 +57,8 @@ def run_nlp_enrichment_local(input_path: str, output_path: str) -> str:
         enriched_jobs = list(executor.map(process_single_job, raw_jobs, chunksize=10))
 
     end_time = time.time()
-    print(f"✅ Extraction finished in {end_time - start_time:.2f} seconds.")
+    duration = round(end_time - start_time, 2)
+    print(f"✅ Extraction finished in {duration} seconds.")
 
     directory = os.path.dirname(output_path)
     os.makedirs(directory, exist_ok=True)
@@ -71,23 +72,28 @@ def run_nlp_enrichment_local(input_path: str, output_path: str) -> str:
     run_id = context['dag_run'].run_id
     task_id = context['task'].task_id
 
+    print(f"📡 Sending pipeline metrics to FastAPI for task: {task_id}...")
     try:
-        requests.post(
-            "http://fastapi-service:8081/mongo/save",
+        response = requests.post(
+            "http://airflow-fastapi:8081/api/v1/pipeline_metrics",
             json={
                 "dag_id": "german_job_market_pipeline",
                 "run_id": run_id,
                 "task_id": task_id,
-                "database": "airflow_data",
-                "collection": "task_outputs",
-                "data": {
-                    "status": "success",
-                    "rows_processed": len(enriched_jobs),
-                    "duration_seconds": round(end_time - start_time, 2)
-                }
+                "status": "success",
+                "rows_processed": len(enriched_jobs),
+                "duration_seconds": duration,
+                "execution_date": str(pd.Timestamp.utcnow())
             },
             timeout=5
         )
+
+        # Raise an exception if FastAPI returns a 4xx or 5xx error code
+        response.raise_for_status()
+        print(f"✅ Pipeline metrics successfully logged! (Status: {response.status_code})")
+
     except Exception as e:
-        print(f"Failed to log metrics: {e}")
+        print(f"❌ Failed to log pipeline metrics: {e}")
+        raise
+
     return output_path

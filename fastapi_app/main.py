@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import UpdateOne
 from pymongo.errors import ConnectionFailure
+from schemas import MLMetricsPayload, PipelineMetricPayload, JobRecord, ClusterGetResponse, SecureJobsResponse, BulkSaveResponse, MetricsSaveResponse, ErrorResponse
 
 # Import the optimized Pydantic models
 from schemas import (
@@ -243,3 +244,13 @@ async def get_ml_metrics(
     cursor = db["ml_metrics_history"].find({}, {"_id": 0}).sort("execution_date", -1).limit(limit)
     metrics = await cursor.to_list(length=limit)
     return metrics
+
+@app.post("/api/v1/pipeline_metrics", tags=["MongoDB Ingestion"])
+async def save_pipeline_metrics(metric: PipelineMetricPayload):
+    """Saves Airflow task execution statistics (rows processed, duration)."""
+    try:
+        await db["ingestion_stats"].insert_one(metric.model_dump())
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Pipeline metrics write error: {e}")
+        raise HTTPException(status_code=500, detail="Database write failed")
