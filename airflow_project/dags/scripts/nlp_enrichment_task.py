@@ -33,20 +33,48 @@ def process_single_job(job_doc: dict) -> dict:
     return job_doc
 
 def run_nlp_enrichment_local(input_path: str, output_path: str) -> str:
-    """Reads cleaned data from local Parquet, extracts entities, and saves enriched file locally."""
+    """Reads cleaned data, drops existing jobs, extracts entities, and saves locally."""
     print(f"📥 Loading cleaned records from {input_path}...")
     df = pd.read_parquet(input_path)
-    raw_jobs = df.to_dict(orient="records")
 
-    if not raw_jobs:
+    if df.empty:
         print("⚠️ No job descriptions found to process.")
-        # Create an empty parquet file to prevent downstream task failures
-        directory = os.path.dirname(output_path)
-        os.makedirs(directory, exist_ok=True)
         pd.DataFrame().to_parquet(output_path, index=False)
         return output_path
 
-    print(f"🚀 Starting parallel extraction for {len(raw_jobs)} jobs...")
+    # --- INCREMENTAL FILTERING LOGIC ---
+    print("🔍 Fetching existing job IDs from FastAPI to prevent reprocessing...")
+    try:
+        # Use the API_SECRET_KEY to authenticate the internal request
+        token = os.getenv("API_SECRET_KEY")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        response = requests.get(
+            "http://airflow-fastapi:8081/api/v1/jobs/existing_ids",
+            headers=headers,
+            timeout=15
+        )
+        response.raise_for_status()
+        existing_ids = set(response.json())
+
+        # Filter the dataframe: Keep only rows where origin_id is NOT in existing_ids
+        df_new = df[~df['origin_id'].isin(existing_ids)]
+        print(f"📉 Filtered out {len(df) - len(df_new)} existing jobs.")
+
+        raw_jobs = df_new.to_dict(orient="records")
+    except Exception as e:
+        print(f"⚠️ Failed to fetch existing IDs, defaulting to full reprocessing: {e}")
+        raw_jobs = df.to_dict(orient="records")
+    # -----------------------------------
+
+    if not raw_jobs:
+        print("✅ No new jobs to process today. Exiting early.")
+        pd.DataFrame().to_parquet(output_path, index=False)
+
+        # (Optional) Log pipeline metrics for 0 rows processed here if desired
+        return output_path
+
+    print(f"🚀 Starting extraction for {len(raw_jobs)} NEW jobs...")
     start_time = time.time()
 
     # Initialize the NLP models

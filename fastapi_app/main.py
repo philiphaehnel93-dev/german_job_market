@@ -217,6 +217,14 @@ async def get_jobs_secure(
         "data": [serialize_doc(doc) for doc in docs]
     }
 
+    @app.get("/api/v1/jobs/existing_ids", response_model=List[str], tags=["Secure Data"])
+    async def get_existing_job_ids(token_payload: dict = Depends(verify_jwt)):
+        """Returns a list of all existing origin_ids to support incremental pipeline loads."""
+        # Query only the origin_id field to keep the payload tiny and fast
+        cursor = clustered_collection.find({}, {"origin_id": 1, "_id": 0})
+        docs = await cursor.to_list(length=None)
+        return [doc["origin_id"] for doc in docs if "origin_id" in doc]
+
 
 # --- STATS ENDPOINTS ---
 
