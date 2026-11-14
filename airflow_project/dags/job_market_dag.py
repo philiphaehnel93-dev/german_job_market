@@ -28,33 +28,68 @@ BUCKET_NAME = Variable.get("GCP_BUCKET_NAME")
     tags=["job_market", "ingestion"]
 )
 def job_market_pipeline():
-
     @task
     def ingest_jobs(**kwargs):
-        """Fetches job data from specified APIs and uploads raw payload to GCS."""
+        print("\n====== CONFIGURATION CHECK ======")
+        print(f"Total Keywords: {len(KEYWORDS)}")
+        print(f"Keywords to Query: {KEYWORDS}")
+        print("=================================\n")
+
+        """Fetches job data, saves stats to MongoDB, and uploads payload to GCS."""
+        from collections import Counter
+        from pymongo import MongoClient
+        from datetime import datetime
+
         source_choice = kwargs['params']['sources']
         unified_jobs = []
+        adzuna_jobs = []
+        jobsuche_jobs = []
 
+        # 1. Fetch data
         if str(source_choice) == '1':
             print("Sourcing from both AfA and Adzuna.")
-            unified_jobs.extend(fetch_jobsuche(KEYWORDS, max_jobs_per_keyword=1000))
-            unified_jobs.extend(fetch_adzuna(KEYWORDS, max_jobs_per_keyword=1000))
+            jobsuche_jobs = fetch_jobsuche(KEYWORDS, max_jobs_per_keyword=1000)
+            adzuna_jobs = fetch_adzuna(KEYWORDS, max_jobs_per_keyword=1000)
+            unified_jobs.extend(jobsuche_jobs)
+            unified_jobs.extend(adzuna_jobs)
         else:
-            print("Sourcing only from AfA.")
-            unified_jobs.extend(fetch_jobsuche(KEYWORDS, max_jobs_per_keyword=1000))
+            print("Sourcing from AfA only.")
+            jobsuche_jobs = fetch_jobsuche(KEYWORDS, max_jobs_per_keyword=1000)
+            unified_jobs.extend(jobsuche_jobs)
 
-        print(f"Pipeline Complete. Ingested {len(unified_jobs)} total raw jobs.")
+        # 2. Count the jobs
+        adzuna_counts = dict(Counter([job.get("job_title", "Unknown") for job in adzuna_jobs])) if adzuna_jobs else {}
+        jobsuche_counts = dict(Counter([job.get("job_title", "Unknown") for job in jobsuche_jobs])) if jobsuche_jobs else {}
 
+        # 3. Save the statistics to MongoDB
+        try:
+            # Update connection string if your auth/host differs
+            mongo_client = MongoClient("mongodb://admin:admin@local_mongo_db:27017")
+            db = mongo_client["job_market_db"]
+
+            stats_doc = {
+                "run_date": datetime.now(),
+                "total_ingested": len(unified_jobs),
+                "adzuna_breakdown": adzuna_counts,
+                "jobsuche_breakdown": jobsuche_counts
+            }
+
+            db["ingestion_stats"].insert_one(stats_doc)
+            print("Successfully logged ingestion stats to MongoDB.")
+        except Exception as e:
+            print(f"Failed to log stats to MongoDB: {e}")
+
+        # 4. Upload to GCS and return file name for the next task
         if unified_jobs:
-            client = storage.Client.from_service_account_json('/opt/airflow/dags/gcp-key.json', project=PROJECT_ID)
-            bucket = client.bucket(BUCKET_NAME)
+            gcs_client = storage.Client.from_service_account_json('/opt/airflow/dags/gcp-key.json', project=PROJECT_ID)
+            bucket = gcs_client.bucket(BUCKET_NAME)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             file_name = f"raw_jobs_data_{timestamp}.json"
             blob = bucket.blob(file_name)
 
             json_data = json.dumps(unified_jobs, ensure_ascii=False, indent=2)
             blob.upload_from_string(json_data, content_type="application/json")
-            print(f"Successfully uploaded to gs://{BUCKET_NAME}/{file_name}")
+
             return file_name
 
     @task
