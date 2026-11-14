@@ -10,29 +10,29 @@ from airflow.models import Variable
 ADZUNA_APP_ID = Variable.get("ADZUNA_APP_ID")
 ADZUNA_APP_KEY = Variable.get("ADZUNA_APP_KEY")
 
+import os
+import json
+from typing import List
+
 def get_keywords() -> List[str]:
-    # 1. Initialize with a fallback to prevent UnboundLocalError
     all_jobs = ["Data Engineer", "Data Scientist"]
-    
-    json_path = os.path.join(os.path.dirname(__file__), "tech_data_jobs.json")
-    
-    # 2. Safely attempt to load the JSON file
+    json_path = os.path.join(os.path.dirname(__file__), "tech_jobs_dictionary.json")
+
     try:
         if os.path.exists(json_path):
             with open(json_path, "r") as f:
                 all_jobs = json.load(f)
     except Exception as e:
         print(f"Warning: Could not load JSON file. Using fallback. Error: {e}")
-        
-    # 3. Safely fetch the Airflow variable (DAG parsing can sometimes block DB calls)
+
     try:
-        requested_limit = int(Variable.get("JOB_KEYWORD_LIMIT", default_var=2))
+        # Defaults to 10 if the variable is completely missing
+        requested_limit = int(os.getenv("JOB_KEYWORD_LIMIT", 10))
     except Exception:
-        requested_limit = 2
-        
-    # 4. Cap the limit and slice
+        requested_limit = 10
+
     actual_limit = min(requested_limit, len(all_jobs))
-    
+    print(f"Applied limit: {actual_limit}. Final keywords to query: {all_jobs[:actual_limit]}")
     return all_jobs[:actual_limit]
 
 KEYWORDS = get_keywords()
@@ -48,23 +48,37 @@ def fetch_adzuna(keywords: List[str] = KEYWORDS, max_jobs_per_keyword: int = 100
     for keyword in keywords:
         page = 1
         keyword_count = 0
+        print(f"\n--- Starting Adzuna fetch for: '{keyword}' ---")
+
         while keyword_count < max_jobs_per_keyword:
-            params = {"app_id": ADZUNA_APP_ID, "app_key": ADZUNA_APP_KEY, "title_only": keyword}
+            # Added "results_per_page": 50 to pull more records per API call
+            params = {
+                "app_id": ADZUNA_APP_ID,
+                "app_key": ADZUNA_APP_KEY,
+                "title_only": keyword,
+                "results_per_page": 50
+            }
             url = f"https://api.adzuna.com/v1/api/jobs/de/search/{page}?{urllib.parse.urlencode(params)}"
             try:
                 req = urllib.request.Request(url, headers={"Accept": "application/json"})
                 with urllib.request.urlopen(req) as response:
                     data = json.loads(response.read().decode("utf-8"))
                     jobs = data.get("results", [])
+
                     if not jobs:
+                        print(f"Adzuna: No more jobs available for '{keyword}' after page {page - 1}. Moving to next keyword.")
                         break
+
+                    print(f"Adzuna: Fetched {len(jobs)} jobs on page {page} for '{keyword}' (Total so far: {keyword_count + len(jobs)})")
+
                     for job in jobs:
                         if keyword_count >= max_jobs_per_keyword:
+                            print(f"Adzuna: Hit the max limit of {max_jobs_per_keyword} for '{keyword}'.")
                             break
-                        
+
                         title = job.get("title", "Unknown")
                         description = job.get("description", "")
-                        
+
                         results.append({
                             "origin_id": job.get("id"),
                             "source_api": "Adzuna",
@@ -74,7 +88,7 @@ def fetch_adzuna(keywords: List[str] = KEYWORDS, max_jobs_per_keyword: int = 100
                             "is_remote": False,
                             "seniority_level": extract_seniority(title),
                             "description": description,
-                            "tech_stack": []  # Let downstream NLP handle this
+                            "tech_stack": []
                         })
                         keyword_count += 1
                 page += 1
@@ -84,7 +98,7 @@ def fetch_adzuna(keywords: List[str] = KEYWORDS, max_jobs_per_keyword: int = 100
     return results
 
 def fetch_jobsuche(keywords: List[str] = KEYWORDS, max_jobs_per_keyword: int = 1000) -> List[Dict]:
-    print(f"Fetching from Jobsuche (AfA) [Capped at {max_jobs_per_keyword} per keyword]...")
+    print(f"\nFetching from Jobsuche (AfA) [Capped at {max_jobs_per_keyword} per keyword]...")
     results = []
     headers = {
         "Accept": "application/json",
@@ -95,6 +109,8 @@ def fetch_jobsuche(keywords: List[str] = KEYWORDS, max_jobs_per_keyword: int = 1
     for keyword in keywords:
         page = 1
         keyword_count = 0
+        print(f"\n--- Starting Jobsuche fetch for: '{keyword}' ---")
+
         while keyword_count < max_jobs_per_keyword:
             params = {"was": keyword, "page": page, "size": 100}
             encoded_params = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
@@ -107,10 +123,14 @@ def fetch_jobsuche(keywords: List[str] = KEYWORDS, max_jobs_per_keyword: int = 1
                     ergebnisliste = search_data.get("ergebnisliste", [])
 
                     if not ergebnisliste:
+                        print(f"Jobsuche: No more jobs available for '{keyword}' after page {page - 1}. Moving to next keyword.")
                         break
+
+                    print(f"Jobsuche: Fetched {len(ergebnisliste)} jobs on page {page} for '{keyword}' (Total so far: {keyword_count + len(ergebnisliste)})")
 
                     for job in ergebnisliste:
                         if keyword_count >= max_jobs_per_keyword:
+                            print(f"Jobsuche: Hit the max limit of {max_jobs_per_keyword} for '{keyword}'.")
                             break
 
                         refnr = job.get("referenznummer")
@@ -140,7 +160,7 @@ def fetch_jobsuche(keywords: List[str] = KEYWORDS, max_jobs_per_keyword: int = 1
                             "is_remote": job.get("homeofficemoeglich", False),
                             "seniority_level": extract_seniority(title),
                             "description": description,
-                            "tech_stack": []  # Let downstream NLP handle this
+                            "tech_stack": []
                         })
                         keyword_count += 1
                 page += 1
