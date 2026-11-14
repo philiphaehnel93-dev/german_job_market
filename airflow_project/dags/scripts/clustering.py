@@ -67,7 +67,7 @@ def run_kmeans_clustering_and_upsert_mongo(features_path: str, enriched_path: st
     # Prepare data for MongoDB
     records = json.loads(enriched_df.to_json(orient="records"))
     for record in records:
-        record["ml_model_version"] = "v1.1"
+        record["ml_model_version"] = "v1.2"
 
     print("💾 Connecting directly to local MongoDB...")
     # Updated fallback to match your .env configuration
@@ -86,7 +86,7 @@ def run_kmeans_clustering_and_upsert_mongo(features_path: str, enriched_path: st
         "execution_date": pd.Timestamp.utcnow(),
         "inertia": inertia,
         "silhouette_score": float(sil_score),
-        "model_version": "v1.1"
+        "model_version": "v1.2"
     })
 
     print("✅ Upsert and Metrics logging complete!")
