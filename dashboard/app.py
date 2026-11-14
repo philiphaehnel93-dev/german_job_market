@@ -56,7 +56,10 @@ def fetch_job_data_from_fastapi() -> pd.DataFrame:
         st.error("Missing API_SECRET_KEY environment variable.")
         return pd.DataFrame()
 
-    headers = {"Authorization": f"Bearer {SERVICE_TOKEN}"}
+    headers = {
+        "accept": "application/json",
+        "Authorization": f"Bearer {SERVICE_TOKEN}"
+        }
 
     try:
         response = requests.get(
@@ -89,12 +92,16 @@ def fetch_job_data_from_fastapi() -> pd.DataFrame:
 @st.cache_data(ttl=600)
 def fetch_metrics_from_fastapi() -> pd.DataFrame:
     """Fetches ML performance history securely via FastAPI."""
-    SERVICE_TOKEN = os.getenv("STREAMLIT_JWT")
+    SERVICE_TOKEN = os.getenv("API_SECRET_KEY")
 
     if not SERVICE_TOKEN:
         return pd.DataFrame()
 
-    headers = {"Authorization": f"Bearer {SERVICE_TOKEN}"}
+    headers = {
+        "accept": "application/json",
+        "Authorization": f"Bearer {SERVICE_TOKEN}"
+    }
+
     try:
         response = requests.get(
             "http://fastapi-service:8081/api/v1/ml_metrics",
