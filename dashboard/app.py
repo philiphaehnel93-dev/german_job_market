@@ -1,19 +1,16 @@
 """
 Market Segmentation & National Baseline Dashboard
-Analyzes German Tech Roles using Entgeldatlas Baselines and MongoDB Clustered Data.
+Analyzes German Tech Roles using Entgeldatlas Baselines and FastAPI Clustered Data.
 """
 
-from typing import Dict, List, Tuple
+from typing import Dict, List
 import os
 import json
 import requests
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 import seaborn as sns
 from sklearn.preprocessing import MultiLabelBinarizer
-from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure
 import streamlit as st
 
 # -----------------------------------------------------------------------------
@@ -51,62 +48,27 @@ def load_job_titles() -> List[str]:
     return list(ENTGELDATLAS_BASELINES.keys())
 
 @st.cache_data(ttl=600)
-def load_job_data_from_mongo() -> pd.DataFrame:
-    """Fetches real clustered job data directly from MongoDB."""
-    mongo_uri = os.environ.get("MONGO_URI")
-    if not mongo_uri:
-        st.error("Error: MONGO_URI environment variable is not set.")
-        return pd.DataFrame()
-
-    try:
-        client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
-        client.admin.command('ping')
-        db = client["job_market_db"]
-        collection = db["jobs_master"]
-
-        records = list(collection.find({}, {"_id": 0}))
-        if not records:
-            return pd.DataFrame()
-
-        df = pd.DataFrame(records)
-        if "tech_stack" in df.columns:
-            df = df[df["tech_stack"].apply(lambda x: isinstance(x, list) and len(x) > 0)]
-        if "location" in df.columns and "location_city" not in df.columns:
-            df["location_city"] = df["location"]
-
-        return df
-    except ConnectionFailure:
-        st.error("Error: Failed to connect to MongoDB.")
-        return pd.DataFrame()
-
-def fetch_job_data_from_over_fastapi() -> pd.DataFrame:
-    """Fetches clustered job data in MongoDB over FastApi Endpoint."""
-    SERVICE_TOKEN = os.getenv("STREAMLIT_JWT")
+def fetch_job_data_from_fastapi() -> pd.DataFrame:
+    """Fetches clustered job data securely via FastAPI Endpoint."""
+    SERVICE_TOKEN = os.getenv("API_SECRET_KEY")
 
     if not SERVICE_TOKEN:
-        st.error("Missing STREAMLIT_JWT environment variable.")
+        st.error("Missing API_SECRET_KEY environment variable.")
         return pd.DataFrame()
-    
-    headers = {
-            "Authorization": f"Bearer {SERVICE_TOKEN}"
-        }
 
-    try:        
-        # Request data from the internal Docker network URL
+    headers = {"Authorization": f"Bearer {SERVICE_TOKEN}"}
+
+    try:
         response = requests.get(
             "http://fastapi-service:8081/api/v1/jobs",
             headers=headers,
             timeout=10,
         )
-        print("RESPONSE STATUS:", response.status_code)
 
         if response.status_code != 200:
             st.error(f"API Error ({response.status_code}): {response.text}")
             return pd.DataFrame()
 
-        st.success("Successfully authenticated!")
-
-        # Adjust ["data"] if your FastAPI endpoint returns a raw list directly
         payload = response.json()
         records = payload.get("data", payload) if isinstance(payload, dict) else payload
 
@@ -121,11 +83,33 @@ def fetch_job_data_from_over_fastapi() -> pd.DataFrame:
 
         return df
     except requests.exceptions.RequestException as exc:
-        # Catches ConnectionError, Timeout, InvalidURL, etc.
         st.error(f"Failed to reach FastAPI service: {exc}")
         return pd.DataFrame()
 
-def compute_centroids_from_db(df: pd.DataFrame) -> pd.DataFrame:
+@st.cache_data(ttl=600)
+def fetch_metrics_from_fastapi() -> pd.DataFrame:
+    """Fetches ML performance history securely via FastAPI."""
+    SERVICE_TOKEN = os.getenv("STREAMLIT_JWT")
+
+    if not SERVICE_TOKEN:
+        return pd.DataFrame()
+
+    headers = {"Authorization": f"Bearer {SERVICE_TOKEN}"}
+    try:
+        response = requests.get(
+            "http://fastapi-service:8081/api/v1/ml_metrics",
+            headers=headers,
+            timeout=10,
+        )
+        if response.status_code == 200:
+            data = response.json()
+            return pd.DataFrame(data) if data else pd.DataFrame()
+    except requests.exceptions.RequestException:
+        pass
+
+    return pd.DataFrame()
+
+def compute_centroids(df: pd.DataFrame) -> pd.DataFrame:
     """Computes skill probability centroids per cluster based on live data."""
     if "tech_stack" not in df.columns or "cluster_id" not in df.columns:
         return pd.DataFrame()
@@ -148,22 +132,19 @@ st.set_page_config(page_title="German Tech Role Market Segmentation", layout="wi
 
 st.sidebar.title("Configuration")
 
-# Replaced selectbox with st.radio to completely eliminate the typing/search box
 job_options = load_job_titles()
 selected_role = st.sidebar.radio("Occupational Target", options=job_options)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Job Postings Filters")
 
-all_data = load_job_data_from_mongo()
-
-if st.button("Fetch Secure Data"):
-    all_data = fetch_job_data_from_over_fastapi()
+# Automatically fetch data directly from FastAPI (button removed)
+all_data = fetch_job_data_from_fastapi()
 
 if all_data.empty:
-    st.warning("⚠️ No data found in MongoDB `jobs_master`. Run your Airflow pipeline to populate the database.")
+    st.warning("⚠️ No data found. Ensure the Airflow pipeline has run and FastAPI is accessible.")
 else:
-    # Seniority Level via Checkboxes (Zero typing allowed)
+    # Seniority Level via Checkboxes
     st.sidebar.markdown("**Seniority Level**")
     available_seniorities = list(all_data["level"].dropna().unique()) if "level" in all_data.columns else (
         list(all_data["seniority_level"].dropna().unique()) if "seniority_level" in all_data.columns else ["Unspecified"]
@@ -176,7 +157,7 @@ else:
 
     st.sidebar.markdown("---")
 
-    # Work Model via Checkboxes (Zero typing allowed)
+    # Work Model via Checkboxes
     st.sidebar.markdown("**Work Model**")
     available_models = list(all_data["work_model"].dropna().unique()) if "work_model" in all_data.columns else ["Remote", "Hybrid", "On-site"]
 
@@ -195,7 +176,7 @@ else:
         filtered_jobs = filtered_jobs[filtered_jobs["work_model"].isin(selected_work_models)]
 
     st.title("German Tech Role Market Segmentation")
-    st.caption("Combining statutory quartiles with live MongoDB insights.")
+    st.caption("Combining statutory quartiles with live API insights.")
 
     if selected_role in ENTGELDATLAS_BASELINES:
         st.subheader(f"Statutory Salary Baseline: {selected_role}")
@@ -212,11 +193,8 @@ else:
         if "cluster_name" not in filtered_jobs.columns:
             filtered_jobs["cluster_name"] = filtered_jobs["cluster_id"].map(CLUSTER_LABELS)
 
-        centroid_matrix = compute_centroids_from_db(filtered_jobs)
+        centroid_matrix = compute_centroids(filtered_jobs)
 
-        # -----------------------------------------------------------------------------
-        # PROMINENT TOP-LEVEL 3-TAB LAYOUT ARCHITECTURE
-        # -----------------------------------------------------------------------------
         tab_heatmap, tab_deepdive, tab_monitoring = st.tabs([
             "📊 Heatmap & Charts",
             "🔍 Archetype Deep Dive",
@@ -269,7 +247,6 @@ else:
             active_archetypes = list(filtered_jobs["cluster_name"].dropna().unique())
 
             if active_archetypes:
-                # Also changed this cluster inspector selectbox to a radio or keep it strict
                 selected_archetype = st.radio("Select Cluster to Inspect:", options=active_archetypes, horizontal=True)
                 cluster_slice = filtered_jobs[filtered_jobs["cluster_name"] == selected_archetype]
 
@@ -295,7 +272,7 @@ else:
             ### What is happening under the hood?
             Your automated Airflow pipeline continuously ingests fresh job postings, extracts skill combinations using a dictionary-based NLP parser (**FlashText**), and groups the market landscape using an unsupervised clustering algorithm.
 
-            This tab tracks the mathematical health, stability, and evolution of the clustering models across consecutive pipeline runs stored in MongoDB (`ml_metrics_history`).
+            This tab tracks the mathematical health, stability, and evolution of the clustering models across consecutive pipeline runs fetched from the FastAPI backend.
 
             ---
             ### Key Metrics Explained:
@@ -305,29 +282,14 @@ else:
               * **Scores near 0 or negative** suggest overlapping skill requirements or poor separation.
             """)
 
-            @st.cache_data(ttl=600)
-            def load_metrics_from_mongo() -> pd.DataFrame:
-                mongo_uri = os.environ.get("MONGO_URI")
-                if not mongo_uri:
-                    return pd.DataFrame()
-                try:
-                    client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
-                    db = client["job_market_db"]
-                    if "ml_metrics_history" in db.list_collection_names():
-                        records = list(db["ml_metrics_history"].find({}, {"_id": 0}))
-                        return pd.DataFrame(records)
-                except ConnectionFailure:
-                    pass
-                return pd.DataFrame()
-
-            metrics_df = load_metrics_from_mongo()
+            metrics_df = fetch_metrics_from_fastapi()
 
             if metrics_df.empty:
-                st.info("ℹ️ No historical metrics found in `ml_metrics_history` yet. They will appear here once your Airflow clustering DAG executes its next run.")
+                st.info("ℹ️ No historical metrics found. They will appear here once your Airflow clustering DAG executes its next run.")
             else:
                 st.markdown("### 📋 Recent Model Runs Log")
                 st.dataframe(metrics_df, use_container_width=True, hide_index=True)
 
-                if "timestamp" in metrics_df.columns and "inertia" in metrics_df.columns:
+                if "execution_date" in metrics_df.columns and "inertia" in metrics_df.columns:
                     st.markdown("### 📉 Inertia Trend Over Time")
-                    st.line_chart(metrics_df.set_index("timestamp")["inertia"])
+                    st.line_chart(metrics_df.set_index("execution_date")["inertia"])
