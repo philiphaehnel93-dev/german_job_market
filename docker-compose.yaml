@@ -86,12 +86,8 @@ services:
     - .env
     environment:
       AIRFLOW_BASE_URL: "http://airflow-webserver:8080/api/v1"
-      AIRFLOW_USER: ${AIRFLOW_USER}
-      AIRFLOW_PASSWORD: ${AIRFLOW_PASSWORD}
-      MONGO_URI: ${MONGO_URI}
       MONGO_HOST: "mongodb"
       MONGO_PORT: "27017"
-      MONGO_DB_NAME: ${MONGO_DB_NAME}
       API_SECRET_KEY: ${API_SECRET_KEY}
     volumes:
       - ./fastapi_app:/app
