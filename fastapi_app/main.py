@@ -82,7 +82,8 @@ async def get_clustered_jobs(
 
     cursor = clustered_collection.find(query).limit(limit)
     docs = await cursor.to_list(length=limit)
-
+    print("Connected DB Name:", db.name)
+    print("Document Count in Collection:", await clustered_collection.count_documents({}))
     return {
         "count": len(docs),
         "items": [serialize_doc(doc) for doc in docs],
@@ -118,3 +119,13 @@ async def save_to_mongo(payload: AirflowPayload):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"MongoDB write failed: {str(e)}")
+
+    from fastapi import Query
+from typing import List
+
+@app.get("/stats/ingestion")
+async def get_ingestion_stats(limit: int = Query(10, description="Number of recent runs to fetch")):
+    # Query the collection, omit the un-serializable _id field, and sort by newest first
+    cursor = db["ingestion_stats"].find({}, {"_id": 0}).sort("run_date", -1).limit(limit)
+    stats = await cursor.to_list(length=limit)
+    return stats
