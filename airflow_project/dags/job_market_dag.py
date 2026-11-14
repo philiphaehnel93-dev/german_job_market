@@ -1,6 +1,9 @@
 import json
 from datetime import datetime
 
+from pydantic import BaseModel, Field
+from typing import Optional
+
 from airflow.decorators import dag, task
 from airflow.models.param import Param
 from airflow.models import Variable
@@ -132,8 +135,8 @@ job_market_pipeline()
 # 1. Define the value object structure
 class SalaryMetrics(BaseModel):
     median: Optional[float] = None
-    p25: Optional[float] = None  # 25. Perzentil
-    p75: Optional[float] = None  # 75. Perzentil
+    p25: Optional[float] = None  # 25. Percentile
+    p75: Optional[float] = None  # 75. Percentile
     raw_error: Optional[str] = None
 
 class BatchRequest(BaseModel):
@@ -193,13 +196,17 @@ async def fetch_single_job(
                 detail=f"Verbindungsfehler zur BA-API: {str(exc)}",
             )
 
+#"Data Engineer (43214)", "Data Scientist (43104)", "Software Engineer (43414)", "Machine Learning Engineer (134292)",
+#"Data Analyst (138079)", "Cloud Engineer (133473 called Cloud-Architect @BA) ", "DevOps Engineer (133692)"
+#"Backend Developer (14051 @BA Anwendungsprogrammierer/in)", "Business Intelligence Developer(Not found @BA)", "Analytics Engineer(Not found @BA)"
+
 @dag(
     dag_id="german_median_salary_pipeline",
     schedule_interval="@daily",
     start_date=datetime(2023, 10, 1),
     catchup=False,
     params={
-        "job_codes": Param("43214, 43104, 43414", description="Entgeltatlas specific Job Codes")
+        "job_codes": Param("43214, 43104, 43414, 134292, 138079, 133473, 133692, 14051", description="Entgeltatlas specific Job Codes")
         "region": Param("1", description="1 = Germany, 2-17 = State")
         "gender": Param("1", description="1 = All, 2 = Men, 3 = Women")
         "age": Param("1", description="1 = All, 2 = under 25, 3 = 25-55, 4 = 56+")
