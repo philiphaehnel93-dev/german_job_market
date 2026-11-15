@@ -288,6 +288,9 @@ else:
               * **Scores near +1** indicate dense, well-separated archetypes.
               * **Scores near 0 or negative** suggest overlapping skill requirements or poor separation.
             """)
+            if st.button("Clear Cache & Reload Data"):
+                st.cache_data.clear()  # Clears the cached API responses
+                st.rerun()             # Instantly refreshes the dashboard
 
             metrics_df = fetch_metrics_from_fastapi()
 

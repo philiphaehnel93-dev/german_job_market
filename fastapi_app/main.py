@@ -11,11 +11,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import UpdateOne
 from pymongo.errors import ConnectionFailure
-from schemas import MLMetricsPayload, PipelineMetricPayload, JobRecord, ClusterGetResponse, SecureJobsResponse, BulkSaveResponse, MetricsSaveResponse, ErrorResponse
 
 # Import the optimized Pydantic models
 from schemas import (
-    JobRecord, MLMetricsPayload, ClusterGetResponse,
+    JobRecord, MLMetricsPayload, PipelineMetricPayload,
     SecureJobsResponse, BulkSaveResponse, MetricsSaveResponse, ErrorResponse
 )
 
@@ -133,41 +132,6 @@ async def bulk_save_jobs(jobs: List[JobRecord]):
 
     return {"status": "no_operations", "matched": 0, "upserted": 0, "modified": 0}
 
-
-@app.post("/api/v1/ml_metrics", response_model=MetricsSaveResponse, tags=["MongoDB Ingestion"])
-async def save_ml_metrics(metrics: MLMetricsPayload):
-    """Saves model evaluation metrics from Airflow."""
-    try:
-        result = await db["ml_metrics_history"].insert_one(metrics.model_dump())
-        return {"status": "success", "id": str(result.inserted_id)}
-    except Exception as e:
-        logger.error(f"Metrics write error: {e}")
-        raise HTTPException(status_code=500, detail="Database write failed")
-
-
-# --- DATA RETRIEVAL ENDPOINTS ---
-
-@app.get("/jobs/clustered", response_model=ClusterGetResponse, tags=["Public Data"])
-async def get_clustered_jobs(
-    cluster_id: Optional[int] = Query(None, description="Filter by cluster ID"),
-    limit: int = Query(100, ge=1, le=1000, description="Max records to return"),
-):
-    """Unprotected endpoint for clustered jobs."""
-    query = {}
-    if cluster_id is not None:
-        query["cluster_id"] = cluster_id
-
-    cursor = clustered_collection.find(query).limit(limit)
-    docs = await cursor.to_list(length=limit)
-
-    logger.info(f"Retrieved {len(docs)} clustered jobs (Unprotected)")
-
-    return {
-        "count": len(docs),
-        "items": [serialize_doc(doc) for doc in docs],
-    }
-
-
 # --- SECURE DATA RETRIEVAL ---
 
 security = HTTPBearer()
@@ -217,6 +181,7 @@ async def get_jobs_secure(
         "data": [serialize_doc(doc) for doc in docs]
     }
 
+# --- USED FOR NLP PROCESSING TO COMPARE ALREADY PROCESSED JOBS ---
 @app.get("/api/v1/jobs/existing_ids", response_model=List[str], tags=["Secure Data"])
 async def get_existing_job_ids(token_payload: dict = Depends(verify_jwt)):
     """Returns a list of all existing origin_ids to support incremental pipeline loads."""
@@ -227,21 +192,17 @@ async def get_existing_job_ids(token_payload: dict = Depends(verify_jwt)):
 
 
 # --- STATS ENDPOINTS ---
+@app.post("/api/v1/ml_metrics", response_model=MetricsSaveResponse, tags=["MongoDB Ingestion"])
+async def save_ml_metrics(metrics: MLMetricsPayload):
+    """Saves model evaluation metrics from Airflow."""
+    try:
+        result = await db["ml_metrics_history"].insert_one(metrics.model_dump())
+        return {"status": "success", "id": str(result.inserted_id)}
+    except Exception as e:
+        logger.error(f"Metrics write error: {e}")
+        raise HTTPException(status_code=500, detail="Database write failed")
 
-@app.get("/stats/ingestion", response_model=List[Dict[str, Any]], tags=["Admin"])
-async def get_ingestion_stats(limit: int = Query(10, description="Number of recent runs to fetch")):
-    """Returns raw dictionary history for ingestion stats."""
-    cursor = db["ingestion_stats"].find({}, {"_id": 0}).sort("run_date", -1).limit(limit)
-    stats = await cursor.to_list(length=limit)
-    return stats
 
-
-@app.get("/stats/api_access", response_model=List[Dict[str, Any]], tags=["Admin"])
-async def get_api_access_logs(limit: int = Query(10, description="Recent access logs")):
-    """Returns raw dictionary history for API access logs."""
-    cursor = db["api_access_logs"].find({}, {"_id": 0}).sort("accessed_at", -1).limit(limit)
-    logs = await cursor.to_list(length=limit)
-    return logs
 
 @app.get("/api/v1/ml_metrics", tags=["Secure Data"])
 async def get_ml_metrics(
@@ -261,4 +222,14 @@ async def save_pipeline_metrics(metric: PipelineMetricPayload):
         return {"status": "success"}
     except Exception as e:
         logger.error(f"Pipeline metrics write error: {e}")
+        raise HTTPException(status_code=500, detail="Database write failed")
+
+@app.post("/api/v1/ingestion_stats", tags=["MongoDB Ingestion"])
+async def save_ingestion_breakdown(stats: dict):
+    """Saves the raw job sourcing counts and breakdowns from Airflow."""
+    try:
+        await db["ingestion_stats"].insert_one(stats)
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Ingestion stats write error: {e}")
         raise HTTPException(status_code=500, detail="Database write failed")

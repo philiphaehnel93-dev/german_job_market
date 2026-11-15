@@ -46,6 +46,8 @@ def run_kmeans_clustering_and_upsert_mongo(features_path: str, enriched_path: st
     if os.path.exists(model_path):
         print("🔍 Local model found! Loading for inference...")
         kmeans = joblib.load(model_path)
+        expected_features = kmeans.feature_names_in_
+        features_df = features_df.reindex(columns=expected_features, fill_value=0)
         enriched_df['cluster_id'] = kmeans.predict(features_df)
     else:
         print(f"🧠 No model found. Training initial model with {n_clusters} clusters...")
@@ -63,8 +65,15 @@ def run_kmeans_clustering_and_upsert_mongo(features_path: str, enriched_path: st
             print(f"⚠️ Failed to upload model to GCS: {e}")
 
     # --- CALCULATE PERFORMANCE METRICS ---
-    inertia = kmeans.inertia_
-    sil_score = silhouette_score(features_df, enriched_df['cluster_id'])
+    inertia = kmeans.inertia_ if hasattr(kmeans, 'inertia_') else 0.0
+
+    # Silhouette score requires at least 2 distinct clusters to calculate
+    unique_clusters = enriched_df['cluster_id'].nunique()
+    if unique_clusters > 1:
+        sil_score = silhouette_score(features_df, enriched_df['cluster_id'])
+    else:
+        print(f"⚠️ Only {unique_clusters} cluster predicted in this small batch. Defaulting silhouette score to 0.0.")
+        sil_score = 0.0
     print(f"📊 Model Metrics - Inertia: {inertia:.2f}, Silhouette: {sil_score:.4f}")
 
     # Prepare data for MongoDB
@@ -91,6 +100,25 @@ def run_kmeans_clustering_and_upsert_mongo(features_path: str, enriched_path: st
         "dag_run_id": run_id,
         "task_id": task_id
     }
+
+    # --- ADD THIS BLOCK TO SEND THE ML METRICS ---
+    print("📊 Sending ML model metrics to FastAPI...")
+    try:
+        # Fetch the token for the secure endpoint
+        token = os.getenv("API_SECRET_KEY")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        metrics_response = requests.post(
+            "http://airflow-fastapi:8081/api/v1/ml_metrics",
+            json=metrics_payload,
+            headers=headers,
+            timeout=10
+        )
+        metrics_response.raise_for_status()
+        print("✅ ML metrics successfully logged!")
+    except Exception as e:
+        print(f"⚠️ Failed to log ML metrics: {e}")
+
 
     # --- Send Standard Pipeline Metrics ---
     print("📡 Sending pipeline execution metrics to FastAPI...")

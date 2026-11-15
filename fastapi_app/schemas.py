@@ -21,14 +21,6 @@ class MLMetricsPayload(BaseModel):
 
 # --- Response Schemas ---
 
-class ClusterGetResponse(BaseModel):
-    count: int = Field(..., examples=[1527])
-    items: List[Dict[str, Any]] = Field(
-        ...,
-        description="List of MongoDB Docs",
-        examples=[[{"_id": "67338a...", "job_title": "Data Engineer"}]]
-    )
-
 class SecureJobsResponse(BaseModel):
     message: str
     service: Optional[str] = None
