@@ -33,7 +33,7 @@ def process_single_job(job_doc: dict) -> dict:
     return job_doc
 
 def run_nlp_enrichment_local(input_path: str, output_path: str) -> str:
-    """Reads cleaned data, drops existing jobs, extracts entities, and saves locally."""
+    """Reads cleaned data from local Parquet, drops existing jobs, extracts entities, and saves locally."""
     print(f"📥 Loading cleaned records from {input_path}...")
     df = pd.read_parquet(input_path)
 
@@ -45,7 +45,6 @@ def run_nlp_enrichment_local(input_path: str, output_path: str) -> str:
     # --- INCREMENTAL FILTERING LOGIC ---
     print("🔍 Fetching existing job IDs from FastAPI to prevent reprocessing...")
     try:
-        # Use the API_SECRET_KEY to authenticate the internal request
         token = os.getenv("API_SECRET_KEY")
         headers = {"Authorization": f"Bearer {token}"}
 

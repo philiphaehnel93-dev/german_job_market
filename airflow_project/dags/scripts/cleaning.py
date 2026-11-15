@@ -42,7 +42,6 @@ def clean_job_records_and_save_local(raw_jobs: list, output_path: str) -> str:
     task_id = context['task'].task_id
 
     try:
-        # Assign the request to the 'response' variable
         response = requests.post(
             "http://airflow-fastapi:8081/api/v1/pipeline_metrics",
             json={
