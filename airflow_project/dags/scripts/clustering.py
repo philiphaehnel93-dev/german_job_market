@@ -3,13 +3,14 @@ import json
 import joblib
 import pandas as pd
 import requests
+from time import perf_counter
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from google.cloud import storage
 from airflow.operators.python import get_current_context
 
 def run_kmeans_clustering_and_upsert_mongo(features_path: str, enriched_path: str, n_clusters: int = 5):
-    start_time = time.perf_counter()
+    start_time = perf_counter()
     print(f"📥 Loading features and enriched records...")
     features_df = pd.read_parquet(features_path)
     enriched_df = pd.read_parquet(enriched_path)
@@ -122,7 +123,7 @@ def run_kmeans_clustering_and_upsert_mongo(features_path: str, enriched_path: st
 
 
     # --- Send Standard Pipeline Metrics ---
-    end_time = time.perf_counter()
+    end_time = perf_counter()
     actual_duration = round(end_time - start_time, 2)
     print("📡 Sending pipeline execution metrics to FastAPI...")
     try:
