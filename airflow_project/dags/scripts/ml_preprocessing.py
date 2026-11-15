@@ -42,22 +42,26 @@ def run_feature_engineering_local(input_path: str, output_path: str) -> str:
     context = get_current_context()
     run_id = context['dag_run'].run_id
     task_id = context['task'].task_id
+
     try:
-            requests.post(
-                "http://fastapi-service:8081/mongo/save",
-                json={
-                    "dag_id": "german_job_market_pipeline",
-                    "run_id": run_id,
-                    "task_id": task_id,
-                    "database": "airflow_data",
-                    "collection": "task_outputs",
-                    "data": {
-                        "status": "success",
-                        "rows_processed": len(feature_df)
-                    }
-                },
-                timeout=5
-            )
+        # 1. Assign the request to the 'response' variable
+        response = requests.post(
+            "http://airflow-fastapi:8081/api/v1/pipeline_metrics",
+            json={
+                "dag_id": "german_job_market_pipeline",
+                "run_id": context['dag_run'].run_id,
+                "task_id": context['task'].task_id,
+                "status": "success",
+                "rows_processed": len(feature_df),  # 2. Use feature_df here
+                "duration_seconds": 0.0,            # 3. Set duration to 0.0
+                "execution_date": str(pd.Timestamp.utcnow())
+            },
+            timeout=5
+        )
+        # Now this will work perfectly
+        response.raise_for_status()
+        print(f"✅ Pipeline metrics successfully logged! (Status: {response.status_code})")
     except Exception as e:
-        print(f"Failed to log metrics: {e}")
+        print(f"❌ Failed to log pipeline metrics: {e}")
+        raise
     return output_path
