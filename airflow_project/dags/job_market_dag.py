@@ -5,7 +5,7 @@ from datetime import datetime
 
 import httpx
 from airflow.decorators import dag, task
-from airflow.exceptions import AirflowException, AirflowFailException
+from airflow.exceptions import AirflowException
 from airflow.models import Variable
 from airflow.models.param import Param
 from google.cloud import storage
@@ -155,17 +155,23 @@ async def fetch_single_job(
 ) -> tuple[str, SalaryMetrics]:
     #Fetches salary data for one job and parses the median values.
     url = f"{BA_BASE_URL}/{job_code}"
+
     headers = {
-            "X-API-Key": "infosysbub-bnet",
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json",
-            "Origin": "https://web.arbeitsagentur.de",
-            "Accept-Encoding": "gzip, deflate, br, zstd",
-            "Connection": "keep-alive"
-        }
+        "X-API-Key": "infosysbub-ega", # The updated key
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-PL,en;q=0.9,de-DE;q=0.8,de;q=0.7,en-GB;q=0.6,en-US;q=0.5",
+        "Origin": "https://web.arbeitsagentur.de",
+        "Connection": "keep-alive",
+        # Adding these modern browser headers heavily reduces bot detection
+        "sec-ch-ua": '"Not-A.Brand";v="99", "Google Chrome";v="157", "Chromium";v="157"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"macOS"'
+    }
+
     async with semaphore:
-        try:
-            response = await client.get(url, headers=headers, params=params)
+        
+            response = await client.get(url, headers=headers)
             response.raise_for_status()
 
             if response.status_code == 204 or not response.content.strip():
@@ -186,7 +192,10 @@ async def fetch_single_job(
         
             # The BA API typically returns a list of regional/demographic entries.
             # Usually the first item matches the requested filter combination.
+            print('data: ', data)
             entry = data[0] if isinstance(data, list) and len(data) > 0 else data
+
+            print('entry: ', entry)
 
             # Extract the official neutral short title from the response
             job_name = entry.get("kurzBezeichnungNeutral") or "Unknown"
@@ -198,17 +207,6 @@ async def fetch_single_job(
                 upper_quartile=entry.get("entgeltQ75"),
             ).model_dump(mode="json")
             return key, metrics
-
-        except httpx.HTTPStatusError as exc:
-            # Don't retry client errors like 401 Unauthorized or 404 Not Found
-            if exc.response.status_code in (401, 403, 404):
-                raise AirflowFailException(
-                    f"Permanent HTTP {exc.response.status_code} error for {url}"
-                ) from exc
-            # Allow Airflow to retry server errors (500, 502, 503) or rate limits (429)
-            raise AirflowException(
-                f"Temporary HTTP {exc.response.status_code} error for {url}"
-            ) from exc
 
 async def fetch_all_jobs(params, job_codes):
     semaphore = asyncio.Semaphore(5)
@@ -226,9 +224,9 @@ async def fetch_all_jobs(params, job_codes):
         salary_dict: dict[str, json] = dict(results)
     return salary_dict 
 
-#"Data Engineer (135872)", "Data Scientist (129987)", "Software Engineer (14051 @BA Anwendungsprogrammierer/in)", "Machine Learning Engineer (134292)",
-#"Data Analyst (138079)", "Cloud Engineer (133473 called Cloud-Architect @BA) ", "DevOps Engineer (133692)"
-#"Backend Developer (135013 als Backend-Entwickler/in)", "Business Intelligence Developer(Not found @BA)", "Analytics Engineer(Not found @BA)"
+#"Data Engineer (135872/43104)", "Data Scientist (129987/43104)", "Software Engineer (14051/43423 @BA Anwendungsprogrammierer/in)", "Machine Learning Engineer (134292/43104)",
+#"Data Analyst (138079/43353)", "Cloud Engineer (133473/43414 called Cloud-Architect @BA) ", "DevOps Engineer (133692/43323)"
+#"Backend Developer (135013/43413 als Backend-Entwickler/in)", "Business Intelligence Developer(Not found @BA)", "Analytics Engineer(Not found @BA)"
 
 @dag(
     dag_id="german_median_salary_pipeline",
@@ -236,7 +234,7 @@ async def fetch_all_jobs(params, job_codes):
     start_date=datetime(2023, 10, 1),
     catchup=False,
     params={
-        "job_codes": Param("135872, 129987, 135013, 134292, 138079, 133473, 133692, 14051", description="Entgeltatlas specific Job Codes"),
+        "job_codes": Param("43423", description="Entgeltatlas specific Job Codes"),
         "region": Param("1", description="1 = Germany, 2-17 = State"),
         "gender": Param("1", description="1 = All, 2 = Men, 3 = Women"),
         "age": Param("1", description="1 = All, 2 = under 25, 3 = 25-55, 4 = 56+"),
