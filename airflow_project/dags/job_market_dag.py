@@ -147,16 +147,7 @@ class BatchRequest(BaseModel):
 # Basis-URL der Bundesagentur für Arbeit
 BA_BASE_URL = "https://rest.arbeitsagentur.de/infosysbub/entgeltatlas/pc/v1/entgelte"
 
-async def fetch_single_job(
-    client: httpx.AsyncClient,
-    job_code: str,
-    params: dict,
-    semaphore: asyncio.Semaphore #prevents sending too many requests at once
-) -> tuple[str, SalaryMetrics]:
-    #Fetches salary data for one job and parses the median values.
-    url = f"{BA_BASE_URL}/{job_code}"
-
-    headers = {
+headers = {
         "X-API-Key": "infosysbub-ega", # The updated key
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
@@ -169,8 +160,17 @@ async def fetch_single_job(
         "sec-ch-ua-platform": '"macOS"'
     }
 
+async def fetch_single_job(
+    url: str,
+    client: httpx.AsyncClient,
+    job_code: str,
+    params: dict,
+    semaphore: asyncio.Semaphore #prevents sending too many requests at once
+) -> tuple[str, SalaryMetrics]:
+    #Fetches salary data for one job and parses the median values.
+
     async with semaphore:
-        
+            url = f"{url}/{job_code}"
             response = await client.get(url, headers=headers)
             response.raise_for_status()
 
@@ -180,49 +180,28 @@ async def fetch_single_job(
                 )
                 return None
 
-            print('job_code: ', job_code)
-            print('response: ', response)
             try:
                 data = response.json()
+                return data
             except json.JSONDecodeError as exc:
                 raise AirflowException(
                     f"Invalid JSON (HTTP {response.status_code}) from {response.request.url}. "
                     f"Body preview: {response.text[:200]!r}"
                 ) from exc
-        
-            # The BA API typically returns a list of regional/demographic entries.
-            # Usually the first item matches the requested filter combination.
-            print('data: ', data)
-            entry = data[0] if isinstance(data, list) and len(data) > 0 else data
 
-            print('entry: ', entry)
-
-            # Extract the official neutral short title from the response
-            job_name = entry.get("kurzBezeichnungNeutral") or "Unknown"
-            key = f"{job_name} ({job_code})"
-
-            metrics = SalaryMetrics(
-                median=entry.get("entgelt"),
-                lower_quartile=entry.get("entgeltQ25"),
-                upper_quartile=entry.get("entgeltQ75"),
-            ).model_dump(mode="json")
-            return key, metrics
-
-async def fetch_all_jobs(params, job_codes):
+async def fetch_all_jobs(url, params, job_codes):
     semaphore = asyncio.Semaphore(5)
     results = {}
-    salary_dict = {}
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         tasks = [
-            fetch_single_job(client, code, params, semaphore)
+            fetch_single_job(url, client, code, params, semaphore)
             for code in job_codes
         ]
         # Run all HTTP requests concurrently
         results = await asyncio.gather(*tasks)
-            
-        salary_dict: dict[str, json] = dict(results)
-    return salary_dict 
+
+    return results
 
 #"Data Engineer (135872/43104)", "Data Scientist (129987/43104)", "Software Engineer (14051/43423 @BA Anwendungsprogrammierer/in)", "Machine Learning Engineer (134292/43104)",
 #"Data Analyst (138079/43353)", "Cloud Engineer (133473/43414 called Cloud-Architect @BA) ", "DevOps Engineer (133692/43323)"
@@ -234,7 +213,7 @@ async def fetch_all_jobs(params, job_codes):
     start_date=datetime(2023, 10, 1),
     catchup=False,
     params={
-        "job_codes": Param("43423", description="Entgeltatlas specific Job Codes"),
+        "job_codes": Param("43104, 43423, 43353, 43414, 43323, 43413", description="Entgeltatlas specific Job Codes"),
         "region": Param("1", description="1 = Germany, 2-17 = State"),
         "gender": Param("1", description="1 = All, 2 = Men, 3 = Women"),
         "age": Param("1", description="1 = All, 2 = under 25, 3 = 25-55, 4 = 56+"),
@@ -243,6 +222,7 @@ async def fetch_all_jobs(params, job_codes):
     tags=["job_market", "salary"]
 )
 def salary_pipeline():
+
 
     @task
     def execute_async_requests_to_entgeltatlas(**kwargs):
@@ -257,8 +237,21 @@ def salary_pipeline():
         }    
 
         # 1. Fetch data
-        results = asyncio.run(fetch_all_jobs(params, job_codes))
-        return results
+        url = BA_BASE_URL
+        results = asyncio.run(fetch_all_jobs(url, params, job_codes))
+        salary_dictionary = {}
+        for result in results:
+            entry = result[0] if isinstance(result, list) and len(result) > 0 else result
+            key = entry.get("kldb")
+
+            metrics = SalaryMetrics(
+                median=entry.get("entgelt"),
+                p25=entry.get("entgeltQ25"),
+                p75=entry.get("entgeltQ75"),
+            ).model_dump(mode="json")
+            salary_dictionary[key] = metrics
+            
+        return salary_dictionary
 
     @task
     def save_salary_data(results: dict):
