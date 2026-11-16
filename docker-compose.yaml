@@ -160,8 +160,8 @@ services:
     image: grafana/grafana:latest
     ports:
       - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin # Change this for production
+    env_file:
+      - .env
     depends_on:
       - prometheus
     volumes:
