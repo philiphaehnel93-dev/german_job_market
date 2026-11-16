@@ -17,6 +17,8 @@ scrape_configs:
     static_configs:
       - targets: ['cadvisor:8080']
 
+  # Scrape FastAPI metrics
   - job_name: 'fastapi'
     static_configs:
       - targets: ['fastapi-service:8081']
+    metrics_path: '/metrics'
