@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 from datetime import datetime
 
 import httpx
@@ -9,7 +8,7 @@ from airflow.exceptions import AirflowException
 from airflow.models import Variable
 from airflow.models.param import Param
 from google.cloud import storage
-from pydantic import BaseModel
+from schemas import SalaryMetrics
 from scripts.cleaning import clean_job_records_and_save_local
 from scripts.clustering import run_kmeans_clustering_and_upsert_mongo
 from scripts.ml_preprocessing import run_feature_engineering_local
@@ -133,17 +132,6 @@ def job_market_pipeline():
 
 job_market_pipeline()
 
-# 1. Define the value object structure
-class SalaryMetrics(BaseModel):
-    median: float | None = None
-    p25: float | None = None  # 25. Percentile
-    p75: float | None = None  # 75. Percentile
-    raw_error: str | None = None
-
-class BatchRequest(BaseModel):
-    # User only provides the list of 5-digit KldB codes
-    job_codes: list[str]
-
 # Basis-URL der Bundesagentur für Arbeit
 BA_BASE_URL = "https://rest.arbeitsagentur.de/infosysbub/entgeltatlas/pc/v1/entgelte"
 
@@ -203,6 +191,12 @@ async def fetch_all_jobs(url, params, job_codes):
 
     return results
 
+async def simple_async_post(url: str, payload: dict | None = None) -> dict:
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload)
+        response.raise_for_status()
+        return response.json()
+
 #"Data Engineer (135872/43104)", "Data Scientist (129987/43104)", "Software Engineer (14051/43423 @BA Anwendungsprogrammierer/in)", "Machine Learning Engineer (134292/43104)",
 #"Data Analyst (138079/43353)", "Cloud Engineer (133473/43414 called Cloud-Architect @BA) ", "DevOps Engineer (133692/43323)"
 #"Backend Developer (135013/43413 als Backend-Entwickler/in)", "Business Intelligence Developer(Not found @BA)", "Analytics Engineer(Not found @BA)"
@@ -255,26 +249,22 @@ def salary_pipeline():
 
     @task
     def save_salary_data(results: dict):
-        from pymongo import MongoClient
-        from datetime import datetime
+
+        dt = datetime.now()
+        dt_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        salary_doc = {
+                "fetch_date": dt_str,
+                "salaryData": results
+        }
+        
         # 2. Save the salary statistics to MongoDB
         try:
-            # Update connection string if your auth/host differs
-            mongo_uri = os.environ.get("MONGO_URI")
-            if not mongo_uri:
-                    return print('No Mongo URI found')
-            mongo_client = MongoClient(mongo_uri)
-            db = mongo_client["job_market_db"]
-
-            salary_doc = {
-                "run_date": datetime.now(),
-                "salaryData": results
-            }
-
-            db["salary_stats"].insert_one(salary_doc)
+            url = "http://airflow-fastapi:8081/api/v1/salary"
+            asyncio.run(simple_async_post(url, salary_doc))
             print("Successfully logged salary stats to MongoDB.")
         except Exception as e:
-            print(f"Failed to salary stats to MongoDB: {e}")
+            raise AirflowException(f"Failed to save salary stats to MongoDB: {e}")
 
     salary_data = execute_async_requests_to_entgeltatlas()
     save_salary_data(salary_data)

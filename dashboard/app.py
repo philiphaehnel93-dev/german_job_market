@@ -12,6 +12,7 @@ import pandas as pd
 import seaborn as sns
 from sklearn.preprocessing import MultiLabelBinarizer
 import streamlit as st
+import re
 
 # -----------------------------------------------------------------------------
 # DATA SOURCES & SCHEMAS
@@ -116,6 +117,40 @@ def fetch_metrics_from_fastapi() -> pd.DataFrame:
 
     return pd.DataFrame()
 
+@st.cache_data(ttl=600)
+def fetch_salary_data_from_fastapi() -> pd.DataFrame:
+    """Fetches salary data securely via FastAPI."""
+    SERVICE_TOKEN = os.getenv("API_SECRET_KEY")
+
+    default_salary = {
+        "Data Engineer (43214)": {"p25": 55_200, "median": 72_400, "p75": 88_900},
+        "Data Scientist (43104)": {"p25": 58_100, "median": 75_600, "p75": 92_300},
+        "Software Engineer (43414)": {"p25": 52_400, "median": 68_800, "p75": 85_100}
+    }
+
+    if not SERVICE_TOKEN:
+        return default_salary
+
+    headers = {
+        "accept": "application/json",
+        "Authorization": f"Bearer {SERVICE_TOKEN}"
+    }
+
+    try:
+        response = requests.get(
+            "http://fastapi-service:8081/api/v1/salary",
+            headers=headers,
+            params={"limit": 1},
+            timeout=10,
+        )
+        if response.status_code == 200:
+            data = response.json()
+            return data if data else default_salary
+    except requests.exceptions.RequestException:
+        pass
+
+    return default_salary
+
 def compute_centroids(df: pd.DataFrame) -> pd.DataFrame:
     """Computes skill probability centroids per cluster based on live data."""
     if "tech_stack" not in df.columns or "cluster_id" not in df.columns:
@@ -185,9 +220,25 @@ else:
     st.title("German Tech Role Market Segmentation")
     st.caption("Combining statutory quartiles with live API insights.")
 
-    if selected_role in ENTGELDATLAS_BASELINES:
+    salary_data = fetch_salary_data_from_fastapi()[0]["salaryData"]
+    import os
+    os.write(1, b'{ENTGELDATLAS_BASELINES.keys()}')
+    print('salaryData:', salary_data)
+    print('salaryData keys:', list(salary_data.keys()))
+    print('selected_role:', selected_role)
+    print('job keys: ', list(ENTGELDATLAS_BASELINES.keys()))
+    salary_stats = {}
+    
+
+    if selected_role in list(ENTGELDATLAS_BASELINES.keys()):
+        for key in list(ENTGELDATLAS_BASELINES.keys()):
+            if selected_role in key:
+                print('key: ', key)
+                code = re.search(r'^[0-9]+$', key)
+                salary_stats = salary_data[code]
+
         st.subheader(f"Statutory Salary Baseline: {selected_role}")
-        kpis = ENTGELDATLAS_BASELINES[selected_role]
+        kpis = salary_stats if salary_stats else ENTGELDATLAS_BASELINES[selected_role]
         col_p25, col_med, col_p75 = st.columns(3)
         col_p25.metric("25th Percentile", f"€{kpis['p25']:,}")
         col_med.metric("National Median", f"€{kpis['median']:,}")
