@@ -29,6 +29,7 @@ services:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+
   postgres:
     image: postgres:13
     environment:
@@ -46,8 +47,13 @@ services:
   airflow-webserver:
     <<: *airflow-common
     command: webserver
+    environment:
+      - AIRFLOW__METRICS__STATSD_ON=true
+      - AIRFLOW__METRICS__STATSD_HOST=statsd-exporter
+      - AIRFLOW__METRICS__STATSD_PORT=9125
+      - AIRFLOW__METRICS__STATSD_PREFIX=airflow
     ports:
-      - 8080:8080
+      - "8080:8080"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
       interval: 10s
@@ -58,12 +64,15 @@ services:
   airflow-scheduler:
     <<: *airflow-common
     command: scheduler
+    environment:
+      - AIRFLOW__METRICS__STATSD_ON=true
+      - AIRFLOW__METRICS__STATSD_HOST=statsd-exporter
+      - AIRFLOW__METRICS__STATSD_PORT=9125
+      - AIRFLOW__METRICS__STATSD_PREFIX=airflow
     healthcheck:
       test:
-        [
-          "CMD-SHELL",
-          'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"',
-        ]
+        - "CMD-SHELL"
+        - 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"'
       interval: 10s
       timeout: 10s
       retries: 5
@@ -77,13 +86,14 @@ services:
       _AIRFLOW_WWW_USER_CREATE: "true"
       _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
       _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+
   fastapi-service:
     build: ./fastapi_app
     container_name: airflow-fastapi
     ports:
       - "8081:8081"
     env_file:
-    - .env
+      - .env
     environment:
       AIRFLOW_BASE_URL: "http://airflow-webserver:8080/api/v1"
       MONGO_HOST: "mongodb"
@@ -94,19 +104,67 @@ services:
       - mongodb
     command: uvicorn main:app --host 0.0.0.0 --port 8081 --reload
     restart: always
+
   dashboard:
-      build: ./dashboard
-      container_name: job_market_dashboard
-      ports:
-        - "8501:8501"
-      env_file:
+    build: ./dashboard
+    container_name: job_market_dashboard
+    ports:
+      - "8501:8501"
+    env_file:
       - .env
-      volumes:
-        - ./dashboard:/app
-        - ./airflow_project/dags/scripts/tech_jobs_dictionary.json:/app/tech_jobs_dictionary.json
-      depends_on:
-        - mongodb
-      restart: unless-stopped
+    volumes:
+      - ./dashboard:/app
+      - ./airflow_project/dags/scripts/tech_jobs_dictionary.json:/app/tech_jobs_dictionary.json
+    depends_on:
+      - mongodb
+    restart: unless-stopped
+
+  # 1. StatsD Exporter (Receives metric packets from Airflow)
+  statsd-exporter:
+    image: prom/statsd-exporter:latest
+    ports:
+      - "9125:9125/udp"
+      - "9125:9125/tcp"
+      - "9102:9102"
+
+  # 2. MongoDB Exporter (Queries Mongo for internal stats)
+  mongo-exporter:
+    image: percona/mongodb_exporter:0.54.0
+    ports:
+      - "9216:9216"
+    environment:
+      # Update with your actual MongoDB service name, user, and password
+      - MONGODB_URI=mongodb://your_user:your_pass@mongo:27017
+
+  # 3. cAdvisor (Introspects Docker containers for resource usage)
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    ports:
+      - "8082:8080" # Changed host port to 8082 to avoid conflict with fastapi-service
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+
+  # 4. Prometheus (Scrapes the exporters)
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      # Maps your local config file into the container
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+  # 5. Grafana (Visualizes the data)
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin # Change this for production
+    depends_on:
+      - prometheus
 
 volumes:
   postgres-db-volume:

@@ -6,12 +6,13 @@ import httpx
 from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from prometheus_fastapi_instrumentator import Instrumentator
 
 # Import your Pydantic models from schemas.py
 from schemas import AirflowPayload, ClusterGetResponse, SaveResponse, ErrorResponse
 
 app = FastAPI(title="Airflow & MongoDB Bridge API")
-
+Instrumentator().instrument(app).expose(app)
 # Allow requests from your Airflow custom view on port 8081
 app.add_middleware(
     CORSMiddleware,
