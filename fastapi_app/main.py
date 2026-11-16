@@ -234,3 +234,27 @@ async def save_ingestion_breakdown(stats: dict):
     except Exception as e:
         logger.error(f"Ingestion stats write error: {e}")
         raise HTTPException(status_code=500, detail="Database write failed")
+
+@app.post("/api/v1/salary", tags=["Job Salary Data"])
+async def save_salary_data(salary_data: dict):
+    """Saves the salary data."""
+    try:
+        await db["salary_stats"].insert_one(salary_data)
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Salary stats write error: {e}")
+        raise HTTPException(status_code=500, detail="Database write failed")
+
+@app.get("/api/v1/salary", tags=["Job Salary Data"])
+async def get_salary_data(
+    token_payload: dict = Depends(verify_jwt),
+    limit: int = Query(50, description="Recent salary data to fetch")
+):
+    """Protected endpoint for Streamlit to fetch salary data."""
+ 
+    cursor = db["salary_stats"].find({ "fetch_date": {"$exists": True, "$ne": None}, "$or": [
+            {"raw_error": {"$exists": False}},
+            {"raw_error": {"$in": [None, "", [], {}]}}
+        ]}, {"_id": 0}).sort("fetch_date", -1).limit(limit)
+    salary_data = await cursor.to_list(length=limit)
+    return salary_data

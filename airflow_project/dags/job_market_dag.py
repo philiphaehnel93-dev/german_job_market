@@ -1,16 +1,19 @@
+import asyncio
 import json
 from datetime import datetime
 
+import httpx
 from airflow.decorators import dag, task
-from airflow.models.param import Param
+from airflow.exceptions import AirflowException
 from airflow.models import Variable
+from airflow.models.param import Param
 from google.cloud import storage
-
-from scripts.utils_raw_data import KEYWORDS, fetch_adzuna, fetch_jobsuche
+from schemas import SalaryMetrics
 from scripts.cleaning import clean_job_records_and_save_local
-from scripts.nlp_enrichment_task import run_nlp_enrichment_local
-from scripts.ml_preprocessing import run_feature_engineering_local
 from scripts.clustering import run_kmeans_clustering_and_upsert_mongo
+from scripts.ml_preprocessing import run_feature_engineering_local
+from scripts.nlp_enrichment_task import run_nlp_enrichment_local
+from scripts.utils_raw_data import KEYWORDS, fetch_adzuna, fetch_jobsuche
 import requests
 
 # Cloud Configuration
@@ -132,3 +135,142 @@ def job_market_pipeline():
     ml_clustering_and_load(features_file, enriched_file)
 
 job_market_pipeline()
+
+# Basis-URL der Bundesagentur für Arbeit
+BA_BASE_URL = "https://rest.arbeitsagentur.de/infosysbub/entgeltatlas/pc/v1/entgelte"
+
+headers = {
+        "X-API-Key": "infosysbub-ega", # The updated key
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-PL,en;q=0.9,de-DE;q=0.8,de;q=0.7,en-GB;q=0.6,en-US;q=0.5",
+        "Origin": "https://web.arbeitsagentur.de",
+        "Connection": "keep-alive",
+        # Adding these modern browser headers heavily reduces bot detection
+        "sec-ch-ua": '"Not-A.Brand";v="99", "Google Chrome";v="157", "Chromium";v="157"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"macOS"'
+    }
+
+async def fetch_single_job(
+    url: str,
+    client: httpx.AsyncClient,
+    job_code: str,
+    params: dict,
+    semaphore: asyncio.Semaphore #prevents sending too many requests at once
+) -> tuple[str, SalaryMetrics]:
+    #Fetches salary data for one job and parses the median values.
+
+    async with semaphore:
+            url = f"{url}/{job_code}"
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+
+            if response.status_code == 204 or not response.content.strip():
+                print(
+                    f"No salary data returned (HTTP {response.status_code}) for {response.request.url}"
+                )
+                return None
+
+            try:
+                data = response.json()
+                return data
+            except json.JSONDecodeError as exc:
+                raise AirflowException(
+                    f"Invalid JSON (HTTP {response.status_code}) from {response.request.url}. "
+                    f"Body preview: {response.text[:200]!r}"
+                ) from exc
+
+async def fetch_all_jobs(url, params, job_codes):
+    semaphore = asyncio.Semaphore(5)
+    results = {}
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        tasks = [
+            fetch_single_job(url, client, code, params, semaphore)
+            for code in job_codes
+        ]
+        # Run all HTTP requests concurrently
+        results = await asyncio.gather(*tasks)
+
+    return results
+
+async def simple_async_post(url: str, payload: dict | None = None) -> dict:
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload)
+        response.raise_for_status()
+        return response.json()
+
+#"Data Engineer (135872/43104)", "Data Scientist (129987/43104)", "Software Engineer (14051/43423 @BA Anwendungsprogrammierer/in)", "Machine Learning Engineer (134292/43104)",
+#"Data Analyst (138079/43353)", "Cloud Engineer (133473/43414 called Cloud-Architect @BA) ", "DevOps Engineer (133692/43323)"
+#"Backend Developer (135013/43413 als Backend-Entwickler/in)", "Business Intelligence Developer(Not found @BA)", "Analytics Engineer(Not found @BA)"
+
+@dag(
+    dag_id="german_median_salary_pipeline",
+    schedule_interval="@daily",
+    start_date=datetime(2023, 10, 1),
+    catchup=False,
+    params={
+        "job_codes": Param("43104, 43423, 43353, 43414, 43323, 43413", description="Entgeltatlas specific Job Codes"),
+        "region": Param("1", description="1 = Germany, 2-17 = State"),
+        "gender": Param("1", description="1 = All, 2 = Men, 3 = Women"),
+        "age": Param("1", description="1 = All, 2 = under 25, 3 = 25-55, 4 = 56+"),
+        "branch": Param("1", description="1 = All")
+    },
+    tags=["job_market", "salary"]
+)
+def salary_pipeline():
+
+
+    @task
+    def execute_async_requests_to_entgeltatlas(**kwargs):
+
+        """Fetches salary data from Entgeltatlas"""
+        job_codes = kwargs['params']['job_codes'].replace(' ', '').split(',')
+        params = {
+            "r": kwargs['params']['region'],
+            "g": kwargs['params']['gender'],
+            "a": kwargs['params']['age'],
+            "b": kwargs['params']['branch'],
+        }    
+
+        # 1. Fetch data
+        url = BA_BASE_URL
+        results = asyncio.run(fetch_all_jobs(url, params, job_codes))
+        salary_dictionary = {}
+        for result in results:
+            entry = result[0] if isinstance(result, list) and len(result) > 0 else result
+            key = entry.get("kldb")
+
+            metrics = SalaryMetrics(
+                median=entry.get("entgelt"),
+                p25=entry.get("entgeltQ25"),
+                p75=entry.get("entgeltQ75"),
+            ).model_dump(mode="json")
+            salary_dictionary[key] = metrics
+            
+        return salary_dictionary
+
+    @task
+    def save_salary_data(results: dict):
+
+        dt = datetime.now()
+        dt_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        salary_doc = {
+                "fetch_date": dt_str,
+                "salaryData": results
+        }
+        
+        # 2. Save the salary statistics to MongoDB
+        try:
+            url = "http://airflow-fastapi:8081/api/v1/salary"
+            asyncio.run(simple_async_post(url, salary_doc))
+            print("Successfully logged salary stats to MongoDB.")
+        except Exception as e:
+            raise AirflowException(f"Failed to save salary stats to MongoDB: {e}")
+
+    salary_data = execute_async_requests_to_entgeltatlas()
+    save_salary_data(salary_data)
+
+salary_pipeline()
