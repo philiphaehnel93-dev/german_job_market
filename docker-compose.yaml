@@ -98,6 +98,7 @@ services:
       AIRFLOW_BASE_URL: "http://airflow-webserver:8080/api/v1"
       MONGO_HOST: "mongodb"
       MONGO_PORT: "27017"
+      API_SECRET_KEY: ${API_SECRET_KEY}
     volumes:
       - ./fastapi_app:/app
     depends_on:

@@ -6,14 +6,6 @@ import os
 from typing import Dict, List
 from airflow.models import Variable
 
-# Fetch API credentials securely from Airflow Variables
-ADZUNA_APP_ID = Variable.get("ADZUNA_APP_ID")
-ADZUNA_APP_KEY = Variable.get("ADZUNA_APP_KEY")
-
-import os
-import json
-from typing import List
-
 def get_keywords() -> List[str]:
     all_jobs = ["Data Engineer", "Data Scientist"]
     json_path = os.path.join(os.path.dirname(__file__), "tech_jobs_dictionary.json")
@@ -44,6 +36,10 @@ def extract_seniority(title: str) -> str:
     return "Unspecified"
 
 def fetch_adzuna(keywords: List[str] = KEYWORDS, max_jobs_per_keyword: int = 1000) -> List[Dict]:
+    # SAFELY FETCH VARIABLES HERE: Only runs when the task executes
+    app_id = Variable.get("ADZUNA_APP_ID")
+    app_key = Variable.get("ADZUNA_APP_KEY")
+
     results = []
     for keyword in keywords:
         page = 1
@@ -51,10 +47,9 @@ def fetch_adzuna(keywords: List[str] = KEYWORDS, max_jobs_per_keyword: int = 100
         print(f"\n--- Starting Adzuna fetch for: '{keyword}' ---")
 
         while keyword_count < max_jobs_per_keyword:
-            # Added "results_per_page": 50 to pull more records per API call
             params = {
-                "app_id": ADZUNA_APP_ID,
-                "app_key": ADZUNA_APP_KEY,
+                "app_id": app_id,
+                "app_key": app_key,
                 "title_only": keyword,
                 "results_per_page": 50
             }

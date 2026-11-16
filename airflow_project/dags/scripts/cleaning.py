@@ -41,24 +41,24 @@ def clean_job_records_and_save_local(raw_jobs: list, output_path: str) -> str:
     run_id = context['dag_run'].run_id
     task_id = context['task'].task_id
 
-    # Log metrics to FastAPI endpoint
     try:
-        requests.post(
-            "http://fastapi-service:8081/mongo/save",
+        response = requests.post(
+            "http://airflow-fastapi:8081/api/v1/pipeline_metrics",
             json={
                 "dag_id": "german_job_market_pipeline",
-                "run_id": run_id,
-                "task_id": task_id,
-                "database": "airflow_data",
-                "collection": "task_outputs",
-                "data": {
-                    "status": "success",
-                    "rows_processed": len(cleaned_jobs)
-                }
+                "run_id": context['dag_run'].run_id,
+                "task_id": context['task'].task_id,
+                "status": "success",
+                "rows_processed": len(cleaned_jobs),
+                "duration_seconds": 0.0,
+                "execution_date": str(pd.Timestamp.utcnow())
             },
             timeout=5
         )
+        # Raise an exception if FastAPI returns a 4xx or 5xx error code
+        response.raise_for_status()
+        print(f"✅ Pipeline metrics successfully logged! (Status: {response.status_code})")
     except Exception as e:
-        print(f"Failed to log metrics: {e}")
-
+        print(f"❌ Failed to log pipeline metrics: {e}")
+        raise  # Forces the Airflow task to fail
     return output_path
