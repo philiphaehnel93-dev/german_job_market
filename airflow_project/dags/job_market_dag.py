@@ -11,6 +11,7 @@ from scripts.cleaning import clean_job_records_and_save_local
 from scripts.nlp_enrichment_task import run_nlp_enrichment_local
 from scripts.ml_preprocessing import run_feature_engineering_local
 from scripts.clustering import run_kmeans_clustering_and_upsert_mongo
+import requests
 
 # Cloud Configuration
 PROJECT_ID = Variable.get("GCP_PROJECT_ID")
@@ -23,7 +24,7 @@ BUCKET_NAME = Variable.get("GCP_BUCKET_NAME")
     start_date=datetime(2023, 10, 1),
     catchup=False,
     params={
-        "sources": Param("1", description="1: Adzuna + AfA | 2: Only AfA")
+        "sources": Param("1", description="1: Adzuna + AfA | 2: Adzuna | 3: AfA ", type="string")
     },
     tags=["job_market", "ingestion"]
 )
@@ -37,47 +38,50 @@ def job_market_pipeline():
 
         """Fetches job data, saves stats to MongoDB, and uploads payload to GCS."""
         from collections import Counter
-        from pymongo import MongoClient
         from datetime import datetime
 
         source_choice = kwargs['params']['sources']
         unified_jobs = []
         adzuna_jobs = []
         jobsuche_jobs = []
-
         # 1. Fetch data
         if str(source_choice) == '1':
             print("Sourcing from both AfA and Adzuna.")
             jobsuche_jobs = fetch_jobsuche(KEYWORDS, max_jobs_per_keyword=1000)
-            adzuna_jobs = fetch_adzuna(KEYWORDS, max_jobs_per_keyword=1000)
+            adzuna_jobs = fetch_adzuna(KEYWORDS, max_jobs_per_keyword=2000)
             unified_jobs.extend(jobsuche_jobs)
+            unified_jobs.extend(adzuna_jobs)
+        elif str(source_choice) == '2':
+            print("Sourcing from Adzuna only.")
+            adzuna_jobs = fetch_adzuna(KEYWORDS, max_jobs_per_keyword=2000)
             unified_jobs.extend(adzuna_jobs)
         else:
             print("Sourcing from AfA only.")
             jobsuche_jobs = fetch_jobsuche(KEYWORDS, max_jobs_per_keyword=1000)
             unified_jobs.extend(jobsuche_jobs)
-
         # 2. Count the jobs
         adzuna_counts = dict(Counter([job.get("job_title", "Unknown") for job in adzuna_jobs])) if adzuna_jobs else {}
         jobsuche_counts = dict(Counter([job.get("job_title", "Unknown") for job in jobsuche_jobs])) if jobsuche_jobs else {}
 
-        # 3. Save the statistics to MongoDB
+        # 3. Save the statistics to MongoDB via FastAPI
         try:
-            # Update connection string if your auth/host differs
-            mongo_client = MongoClient("mongodb://admin:admin@local_mongo_db:27017")
-            db = mongo_client["job_market_db"]
-
-            stats_doc = {
-                "run_date": datetime.now(),
+            stats_payload = {
+                "run_date": datetime.now().isoformat(),  # Converted to string for JSON serialization
                 "total_ingested": len(unified_jobs),
                 "adzuna_breakdown": adzuna_counts,
                 "jobsuche_breakdown": jobsuche_counts
             }
 
-            db["ingestion_stats"].insert_one(stats_doc)
-            print("Successfully logged ingestion stats to MongoDB.")
-        except Exception as e:
-            print(f"Failed to log stats to MongoDB: {e}")
+            # Replace 'fastapi_container_name:8000' with your actual FastAPI service name and port in Docker
+            api_url = "http://airflow-fastapi:8081/api/v1/ingestion_stats"
+
+            response = requests.post(api_url, json=stats_payload)
+            response.raise_for_status()  # Raises an exception for 4XX/5XX errors
+
+            print("Successfully logged ingestion stats via FastAPI.")
+        except requests.exceptions.RequestException as e:
+            print(f"Failed to log stats via FastAPI: {e}")
+            raise
 
         # 4. Upload to GCS and return file name for the next task
         if unified_jobs:
@@ -117,7 +121,7 @@ def job_market_pipeline():
 
     @task
     def ml_clustering_and_load(features_file_path: str, enriched_file_path: str):
-        """Applies K-Means clustering and performs final UPSERT to local MongoDB."""
+        """Applies K-Means clustering and performs final UPSERT to local MongoDB via FastAPI."""
         run_kmeans_clustering_and_upsert_mongo(features_file_path, enriched_file_path, n_clusters=5)
 
     # Define full DAG task dependencies and pass file paths via XComs
