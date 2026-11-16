@@ -26,7 +26,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Airflow & MongoDB Bridge API")
-Instrumentator().instrument(app).expose(app)
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=True)
 # Allow requests from your Airflow custom view on port 8081
 app.add_middleware(
     CORSMiddleware,
