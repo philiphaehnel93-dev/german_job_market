@@ -133,8 +133,7 @@ services:
     ports:
       - "9216:9216"
     environment:
-      # Update with your actual MongoDB service name, user, and password
-      - MONGODB_URI=mongodb://your_user:your_pass@mongo:27017
+      - MONGODB_URI=mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@local_mongo_db:27017/
 
   # 3. cAdvisor (Introspects Docker containers for resource usage)
   cadvisor:
@@ -156,7 +155,6 @@ services:
       # Maps your local config file into the container
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
 
-  # 5. Grafana (Visualizes the data)
   grafana:
     image: grafana/grafana:latest
     ports:
@@ -165,7 +163,10 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=admin # Change this for production
     depends_on:
       - prometheus
+    volumes:
+      - grafana_data:/var/lib/grafana
 
 volumes:
   postgres-db-volume:
   mongo_data:
+  grafana_data:
