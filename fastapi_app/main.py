@@ -9,6 +9,7 @@ from fastapi import FastAPI, Depends, HTTPException, Query, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from prometheus_fastapi_instrumentator import Instrumentator
 from pymongo import UpdateOne
 from pymongo.errors import ConnectionFailure
 
@@ -24,7 +25,26 @@ from contextlib import asynccontextmanager
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Airflow & MongoDB Bridge API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # This runs once when the FastAPI server starts
+    logger.info("Building database indexes...")
+
+    # 1. Speeds up bulk upserts and prevents duplicate jobs
+    await clustered_collection.create_index("origin_id", unique=True)
+
+    # 2. Speeds up Streamlit dashboard queries filtering by cluster
+    await clustered_collection.create_index("cluster_id")
+
+    # 3. Auto-deletes old API audit logs after 30 days (2592000 seconds)
+    await db["api_access_logs"].create_index("accessed_at", expireAfterSeconds=2592000)
+
+    yield  # Server is now running and accepting requests
+
+# Update your app initialization to use the lifespan
+app = FastAPI(title="Airflow & MongoDB Bridge API", lifespan=lifespan)
+
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=True)
 
 # Allow requests from your Airflow custom view on port 8081
 app.add_middleware(
@@ -46,25 +66,6 @@ mongo_client = AsyncIOMotorClient(MONGO_URI)
 db = mongo_client[MONGO_DB_NAME]
 jobs_collection = db["job_runs"]
 clustered_collection = db["jobs_master"]
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # This runs once when the FastAPI server starts
-    logger.info("Building database indexes...")
-
-    # 1. Speeds up bulk upserts and prevents duplicate jobs
-    await clustered_collection.create_index("origin_id", unique=True)
-
-    # 2. Speeds up Streamlit dashboard queries filtering by cluster
-    await clustered_collection.create_index("cluster_id")
-
-    # 3. Auto-deletes old API audit logs after 30 days (2592000 seconds)
-    await db["api_access_logs"].create_index("accessed_at", expireAfterSeconds=2592000)
-
-    yield  # Server is now running and accepting requests
-
-# Update your app initialization to use the lifespan
-app = FastAPI(title="Airflow & MongoDB Bridge API", lifespan=lifespan)
 
 
 def serialize_doc(doc: dict) -> dict:

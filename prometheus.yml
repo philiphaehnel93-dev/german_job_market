@@ -1,0 +1,24 @@
+global:
+  scrape_interval: 15s # The global scraping interval
+
+scrape_configs:
+  # Scrape Airflow metrics
+  - job_name: 'airflow-statsd'
+    static_configs:
+      - targets: ['statsd-exporter:9102']
+
+  # Scrape MongoDB metrics
+  - job_name: 'mongodb'
+    static_configs:
+      - targets: ['mongo-exporter:9216']
+
+  # Scrape Docker container metrics
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+
+  # Scrape FastAPI metrics
+  - job_name: 'fastapi'
+    static_configs:
+      - targets: ['fastapi-service:8081']
+    metrics_path: '/metrics'
