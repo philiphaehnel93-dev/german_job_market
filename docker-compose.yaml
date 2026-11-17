@@ -91,7 +91,7 @@ services:
     build: ./fastapi_app
     container_name: airflow-fastapi
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8080:8080"
     env_file:
       - .env
     environment:
@@ -127,6 +127,10 @@ services:
       - "9125:9125/udp"
       - "9125:9125/tcp"
       - "9102:9102"
+    volumes:
+      - ./statsd_mapping.yml:/tmp/statsd_mapping.yml
+    command:
+      - "--statsd.mapping-config=/tmp/statsd_mapping.yml"
 
   # 2. MongoDB Exporter (Queries Mongo for internal stats)
   mongo-exporter:
@@ -166,7 +170,6 @@ services:
       - prometheus
     volumes:
       - grafana_data:/var/lib/grafana
-
 volumes:
   postgres-db-volume:
   mongo_data:

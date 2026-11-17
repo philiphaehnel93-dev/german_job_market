@@ -1,0 +1,29 @@
+mappings:
+  # 1. Map Task Instance States (Start, Success, Failed)
+  - match: "airflow.ti.finish.*.*.(success|failed)"
+    name: "airflow_ti_finish_${3}"
+    labels:
+      dag_id: "$1"
+      task_id: "$2"
+
+  - match: "airflow.ti.start.*.*"
+    name: "airflow_ti_start"
+    labels:
+      dag_id: "$1"
+      task_id: "$2"
+
+  # 2. Map Operator Successes and Failures
+  - match: "airflow.operator_(successes|failures).(.*)"
+    name: "airflow_operator_${1}"
+    labels:
+      operator_name: "$2"
+
+  # 3. Map DAG Run Durations
+  - match: "airflow.dagrun.duration.(success|failed).(.*)"
+    name: "airflow_dagrun_duration_${1}"
+    labels:
+      dag_id: "$2"
+
+  # 4. Fallback for all other metrics (replaces dots with underscores)
+  - match: "airflow.(.*)"
+    name: "airflow_${1}"
