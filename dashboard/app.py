@@ -118,7 +118,7 @@ def fetch_metrics_from_fastapi() -> pd.DataFrame:
     return pd.DataFrame()
 
 @st.cache_data(ttl=600)
-def fetch_salary_data_from_fastapi() -> pd.DataFrame:
+def fetch_salary_data_from_fastapi() -> dict:
     """Fetches salary data securely via FastAPI."""
     SERVICE_TOKEN = os.getenv("API_SECRET_KEY")
 
@@ -129,7 +129,8 @@ def fetch_salary_data_from_fastapi() -> pd.DataFrame:
     }
 
     if not SERVICE_TOKEN:
-        return default_salary
+        st.warning("⚠️ API_SECRET_KEY missing. Using hardcoded fallback salaries.")
+        return {"salaryData": default_salary, "source": "fallback"}
 
     headers = {
         "accept": "application/json",
@@ -140,16 +141,26 @@ def fetch_salary_data_from_fastapi() -> pd.DataFrame:
         response = requests.get(
             "http://fastapi-service:8081/api/v1/salary",
             headers=headers,
-            params={"limit": 1},
             timeout=10,
         )
         if response.status_code == 200:
             data = response.json()
-            return data if data else default_salary
-    except requests.exceptions.RequestException:
-        pass
+            # If the API returns a list, grab the first item. If it's a dict, use it.
+            if isinstance(data, list) and len(data) > 0:
+                data = data[0]
 
-    return default_salary
+            # Ensure it has the expected structure
+            if isinstance(data, dict) and "salaryData" in data:
+                return {"salaryData": data["salaryData"], "source": "api"}
+            else:
+                return {"salaryData": data, "source": "api"} # Assume the whole dict is the salary data
+        else:
+            st.error(f"⚠️ Salary API returned {response.status_code}: {response.text}")
+    except requests.exceptions.RequestException as e:
+        st.error(f"⚠️ Failed to connect to Salary API: {e}")
+
+    return {"salaryData": default_salary, "source": "fallback"}
+
 
 def compute_centroids(df: pd.DataFrame) -> pd.DataFrame:
     """Computes skill probability centroids per cluster based on live data."""
@@ -221,17 +232,12 @@ else:
     st.caption("Combining statutory quartiles with live API insights.")
 
     api_response = fetch_salary_data_from_fastapi()
+    salary_data = api_response.get("salaryData", {})
 
-    # Handle both list (API response) and dict (fallback) formats
-    if isinstance(api_response, list) and len(api_response) > 0 and "salaryData" in api_response[0]:
-        salary_data = api_response[0]["salaryData"]
-    elif isinstance(api_response, dict) and "salaryData" in api_response:
-        salary_data = api_response["salaryData"]
+    if api_response.get("source") == "api":
+        st.caption("✅ Salary baselines loaded from live API.")
     else:
-        # Fallback to the default dictionary format directly
-        salary_data = api_response
-
-    salary_stats = {}
+        st.caption("⚠️ Salary baselines loaded from offline fallback.")
 
     salary_stats = {}
     matched_baseline_key = None
