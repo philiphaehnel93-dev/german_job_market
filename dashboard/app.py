@@ -220,25 +220,40 @@ else:
     st.title("German Tech Role Market Segmentation")
     st.caption("Combining statutory quartiles with live API insights.")
 
-    salary_data = fetch_salary_data_from_fastapi()[0]["salaryData"]
-    import os
-    os.write(1, b'{ENTGELDATLAS_BASELINES.keys()}')
-    print('salaryData:', salary_data)
-    print('salaryData keys:', list(salary_data.keys()))
-    print('selected_role:', selected_role)
-    print('job keys: ', list(ENTGELDATLAS_BASELINES.keys()))
+    api_response = fetch_salary_data_from_fastapi()
+
+    # Handle both list (API response) and dict (fallback) formats
+    if isinstance(api_response, list) and len(api_response) > 0 and "salaryData" in api_response[0]:
+        salary_data = api_response[0]["salaryData"]
+    elif isinstance(api_response, dict) and "salaryData" in api_response:
+        salary_data = api_response["salaryData"]
+    else:
+        # Fallback to the default dictionary format directly
+        salary_data = api_response
+
     salary_stats = {}
-    
 
-    if selected_role in list(ENTGELDATLAS_BASELINES.keys()):
-        for key in list(ENTGELDATLAS_BASELINES.keys()):
-            if selected_role in key:
-                print('key: ', key)
-                code = re.search(r'^[0-9]+$', key)
-                salary_stats = salary_data[code]
+    salary_stats = {}
+    matched_baseline_key = None
 
+    for key in ENTGELDATLAS_BASELINES.keys():
+        if selected_role.lower() in key.lower() or key.lower() in selected_role.lower():
+            matched_baseline_key = key
+            # If salary_data is the fallback format, it's keyed by the full role name
+            if key in salary_data:
+                salary_stats = salary_data[key]
+            else:
+                # If it's the API format, it might be keyed by the numeric code
+                code_match = re.search(r'\((.*?)\)', key)
+                if code_match:
+                    code = code_match.group(1)
+                    if code in salary_data:
+                        salary_stats = salary_data[code]
+            break
+
+    if matched_baseline_key:
         st.subheader(f"Statutory Salary Baseline: {selected_role}")
-        kpis = salary_stats if salary_stats else ENTGELDATLAS_BASELINES[selected_role]
+        kpis = salary_stats if salary_stats else ENTGELDATLAS_BASELINES[matched_baseline_key]
         col_p25, col_med, col_p75 = st.columns(3)
         col_p25.metric("25th Percentile", f"€{kpis['p25']:,}")
         col_med.metric("National Median", f"€{kpis['median']:,}")
