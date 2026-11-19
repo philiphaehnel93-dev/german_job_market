@@ -19,7 +19,7 @@ x-airflow-common: &airflow-common
 
 services:
   mongodb:
-    image: mongo:6.0
+    image: mongo:7.0
     container_name: local_mongo_db
     restart: always
     environment:
