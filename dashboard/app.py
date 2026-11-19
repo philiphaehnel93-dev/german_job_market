@@ -774,15 +774,23 @@ else:
                 "Airflow clustering DAG executes its next run."
             )
         else:
+            if "execution_date" in metrics_df.columns:
+                metrics_df = metrics_df.copy()
+                metrics_df["_parsed_date"] = pd.to_datetime(
+                    metrics_df["execution_date"], format="ISO8601", utc=True, errors="coerce"
+                )
+                metrics_df = metrics_df.sort_values("_parsed_date", ascending=True).reset_index(drop=True)
+
             latest_row = metrics_df.iloc[-1]
+            latest_version = latest_row.get("model_version", "unknown")
             sil_col = next(
                 (c for c in ["silhouette_score", "silhouette"] if c in metrics_df.columns),
                 None,
             )
 
-            if sil_col and sil_col in latest_row:
+            if sil_col and pd.notna(latest_row.get(sil_col)):
                 sil_val = float(latest_row[sil_col])
-                st.markdown("### 🚦 Current Model Health Evaluation")
+                st.markdown(f"### 🚦 Current Model Health Evaluation (`{latest_version}`)")
                 col_h1, col_h2 = st.columns(2)
 
                 with col_h1:
@@ -803,21 +811,23 @@ else:
                         )
 
                 with col_h2:
-                    if "inertia" in latest_row:
+                    if "inertia" in latest_row and pd.notna(latest_row["inertia"]):
                         inertia_val = float(latest_row["inertia"])
                         st.info(
                             f"**Latest Inertia: {inertia_val:,.1f}** — 🔵 "
-                            "Stable within historical baseline bounds."
+                            f"Recorded on model `{latest_version}`."
                         )
 
             st.markdown("---")
             st.markdown("### 📋 Recent Model Runs Log")
-            st.dataframe(metrics_df, use_container_width=True, hide_index=True)
+            display_metrics = metrics_df.drop(columns=["_parsed_date"], errors="ignore")
+            st.dataframe(display_metrics, use_container_width=True, hide_index=True)
 
-            if "execution_date" in metrics_df.columns:
-                if "inertia" in metrics_df.columns:
+            if "_parsed_date" in metrics_df.columns:
+                chart_df = metrics_df.dropna(subset=["_parsed_date"]).set_index("_parsed_date")
+                if "inertia" in chart_df.columns:
                     st.markdown("### 📉 Inertia Trend Over Time")
-                    st.line_chart(metrics_df.set_index("execution_date")["inertia"])
+                    st.line_chart(chart_df["inertia"])
                 if sil_col:
                     st.markdown("### 📈 Silhouette Score Trend Over Time")
-                    st.line_chart(metrics_df.set_index("execution_date")[sil_col])
+                    st.line_chart(chart_df[sil_col])
