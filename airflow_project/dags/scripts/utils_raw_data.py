@@ -51,7 +51,7 @@ def fetch_adzuna(keywords: List[str] = KEYWORDS, max_jobs_per_keyword: int = 100
                 "app_id": app_id,
                 "app_key": app_key,
                 "title_only": keyword,
-                "results_per_page": 50
+                "results_per_page": 200
             }
             url = f"https://api.adzuna.com/v1/api/jobs/de/search/{page}?{urllib.parse.urlencode(params)}"
             try:

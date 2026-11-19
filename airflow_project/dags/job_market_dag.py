@@ -50,17 +50,17 @@ def job_market_pipeline():
         # 1. Fetch data
         if str(source_choice) == '1':
             print("Sourcing from both AfA and Adzuna.")
-            jobsuche_jobs = fetch_jobsuche(KEYWORDS, max_jobs_per_keyword=1000)
-            adzuna_jobs = fetch_adzuna(KEYWORDS, max_jobs_per_keyword=2000)
+            jobsuche_jobs = fetch_jobsuche(KEYWORDS, max_jobs_per_keyword=800)
+            adzuna_jobs = fetch_adzuna(KEYWORDS, max_jobs_per_keyword=800)
             unified_jobs.extend(jobsuche_jobs)
             unified_jobs.extend(adzuna_jobs)
         elif str(source_choice) == '2':
             print("Sourcing from Adzuna only.")
-            adzuna_jobs = fetch_adzuna(KEYWORDS, max_jobs_per_keyword=2000)
+            adzuna_jobs = fetch_adzuna(KEYWORDS, max_jobs_per_keyword=800)
             unified_jobs.extend(adzuna_jobs)
         else:
             print("Sourcing from AfA only.")
-            jobsuche_jobs = fetch_jobsuche(KEYWORDS, max_jobs_per_keyword=1000)
+            jobsuche_jobs = fetch_jobsuche(KEYWORDS, max_jobs_per_keyword=800)
             unified_jobs.extend(jobsuche_jobs)
         # 2. Count the jobs
         adzuna_counts = dict(Counter([job.get("job_title", "Unknown") for job in adzuna_jobs])) if adzuna_jobs else {}
@@ -232,7 +232,7 @@ def salary_pipeline():
             "g": kwargs['params']['gender'],
             "a": kwargs['params']['age'],
             "b": kwargs['params']['branch'],
-        }    
+        }
 
         # 1. Fetch data
         url = BA_BASE_URL
@@ -248,7 +248,7 @@ def salary_pipeline():
                 p75=entry.get("entgeltQ75"),
             ).model_dump(mode="json")
             salary_dictionary[key] = metrics
-            
+
         return salary_dictionary
 
     @task
@@ -261,7 +261,7 @@ def salary_pipeline():
                 "fetch_date": dt_str,
                 "salaryData": results
         }
-        
+
         # 2. Save the salary statistics to MongoDB
         try:
             url = "http://airflow-fastapi:8081/api/v1/salary"

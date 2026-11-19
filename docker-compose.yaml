@@ -19,7 +19,7 @@ x-airflow-common: &airflow-common
 
 services:
   mongodb:
-    image: mongo:6.0
+    image: mongo:7.0
     container_name: local_mongo_db
     restart: always
     environment:
@@ -53,7 +53,7 @@ services:
       - AIRFLOW__METRICS__STATSD_PORT=9125
       - AIRFLOW__METRICS__STATSD_PREFIX=airflow
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
       interval: 10s
@@ -91,7 +91,7 @@ services:
     build: ./fastapi_app
     container_name: airflow-fastapi
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     env_file:
       - .env
     environment:
@@ -127,6 +127,7 @@ services:
       - "9125:9125/udp"
       - "9125:9125/tcp"
       - "9102:9102"
+    volumes:
 
   # 2. MongoDB Exporter (Queries Mongo for internal stats)
   mongo-exporter:
@@ -166,7 +167,6 @@ services:
       - prometheus
     volumes:
       - grafana_data:/var/lib/grafana
-
 volumes:
   postgres-db-volume:
   mongo_data:
