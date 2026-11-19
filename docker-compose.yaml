@@ -1,7 +1,12 @@
 x-airflow-common: &airflow-common
   build: ./airflow_project
-  env_file:
-    - .env
+  environment: &airflow-common-env
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "${AIRFLOW__DATABASE__SQL_ALCHEMY_CONN}"
+    AIRFLOW__CORE__SQL_ALCHEMY_CONN: "${AIRFLOW__CORE__SQL_ALCHEMY_CONN}"
+    AIRFLOW__METRICS__STATSD_ON: "true"
+    AIRFLOW__METRICS__STATSD_HOST: "statsd-exporter"
+    AIRFLOW__METRICS__STATSD_PORT: "9125"
+    AIRFLOW__METRICS__STATSD_PREFIX: "airflow"
   volumes:
     - ./airflow_project/dags:/opt/airflow/dags
     - ./airflow_project/logs:/opt/airflow/logs
@@ -23,8 +28,8 @@ services:
     container_name: local_mongo_db
     restart: always
     environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      - MONGO_INITDB_ROOT_USERNAME
+      - MONGO_INITDB_ROOT_PASSWORD
     ports:
       - "27017:27017"
     volumes:
@@ -33,13 +38,13 @@ services:
   postgres:
     image: postgres:13
     environment:
-      POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: airflow
-      POSTGRES_DB: airflow
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - POSTGRES_DB
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "airflow"]
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}"]
       interval: 5s
       retries: 5
     restart: always
@@ -60,6 +65,11 @@ services:
       timeout: 10s
       retries: 5
     restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
 
   airflow-scheduler:
     <<: *airflow-common
@@ -77,6 +87,11 @@ services:
       timeout: 10s
       retries: 5
     restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
 
   airflow-init:
     <<: *airflow-common
@@ -84,16 +99,14 @@ services:
     environment:
       _AIRFLOW_DB_UPGRADE: "true"
       _AIRFLOW_WWW_USER_CREATE: "true"
-      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
-      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+      _AIRFLOW_WWW_USER_USERNAME: "${_AIRFLOW_WWW_USER_USERNAME:-$AIRFLOW_USER}"
+      _AIRFLOW_WWW_USER_PASSWORD: "${_AIRFLOW_WWW_USER_PASSWORD:-$AIRFLOW_PASSWORD}"
 
   fastapi-service:
     build: ./fastapi_app
     container_name: airflow-fastapi
     ports:
       - "8081:8081"
-    env_file:
-      - .env
     environment:
       AIRFLOW_BASE_URL: "http://airflow-webserver:8080/api/v1"
       MONGO_HOST: "mongodb"
@@ -111,8 +124,6 @@ services:
     container_name: job_market_dashboard
     ports:
       - "8501:8501"
-    env_file:
-      - .env
     volumes:
       - ./dashboard:/app
       - ./airflow_project/dags/scripts/tech_jobs_dictionary.json:/app/tech_jobs_dictionary.json
@@ -127,6 +138,7 @@ services:
       - "9125:9125/udp"
       - "9125:9125/tcp"
       - "9102:9102"
+    restart: always
 
   # 2. MongoDB Exporter (Queries Mongo for internal stats)
   mongo-exporter:
@@ -135,6 +147,9 @@ services:
       - "9216:9216"
     environment:
       - MONGODB_URI=mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@local_mongo_db:27017/
+    depends_on: 
+      - mongodb
+    restart: always
 
   # 3. cAdvisor (Introspects Docker containers for resource usage)
   cadvisor:
@@ -146,6 +161,7 @@ services:
       - /var/run:/var/run:rw
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
+    restart: always
 
   # 4. Prometheus (Scrapes the exporters)
   prometheus:
@@ -155,17 +171,17 @@ services:
     volumes:
       # Maps your local config file into the container
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    restart: always
 
   grafana:
     image: grafana/grafana:latest
     ports:
       - "3000:3000"
-    env_file:
-      - .env
     depends_on:
       - prometheus
     volumes:
       - grafana_data:/var/lib/grafana
+    restart: always
 
 volumes:
   postgres-db-volume:
