@@ -31,3 +31,5 @@ pgeocode
 # Environment Management (for local testing)
 
 python-dotenv
+
+prometheus-fastapi-instrumentator
