@@ -150,20 +150,24 @@ def verify_jwt(credentials: HTTPAuthorizationCredentials = Depends(security)):
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-
 @app.get("/api/v1/jobs", response_model=SecureJobsResponse, tags=["Secure Data"])
 async def get_jobs_secure(
     token_payload: dict = Depends(verify_jwt),
     cluster_id: Optional[int] = Query(None, description="Filter by cluster ID"),
     limit: int = Query(5000, ge=1, le=10000, description="Max records to return"),
+    include_description: bool = Query(True, description="Include full job descriptions"),
 ):
     """Protected endpoint requiring a valid JWT Bearer token."""
     # Synchronous Audit Logging
     log_entry = {
         "service_identity": token_payload.get("service", "unknown"),
         "endpoint": "/api/v1/jobs",
-        "query_params": {"cluster_id": cluster_id, "limit": limit},
-        "accessed_at": datetime.now(timezone.utc)
+        "query_params": {
+            "cluster_id": cluster_id,
+            "limit": limit,
+            "include_description": include_description,
+        },
+        "accessed_at": datetime.now(timezone.utc),
     }
     await db["api_access_logs"].insert_one(log_entry)
 
@@ -172,14 +176,15 @@ async def get_jobs_secure(
     if cluster_id is not None:
         query["cluster_id"] = cluster_id
 
-    cursor = clustered_collection.find(query).limit(limit)
+    projection = None if include_description else {"description": 0, "emails": 0}
+    cursor = clustered_collection.find(query, projection).limit(limit)
     docs = await cursor.to_list(length=limit)
 
     return {
         "message": "Authentication successful",
         "service": token_payload.get("service"),
         "count": len(docs),
-        "data": [serialize_doc(doc) for doc in docs]
+        "data": [serialize_doc(doc) for doc in docs],
     }
 
 # --- USED FOR NLP PROCESSING TO COMPARE ALREADY PROCESSED JOBS ---
@@ -251,7 +256,7 @@ async def get_salary_data(
     limit: int = Query(50, description="Recent salary data to fetch")
 ):
     """Protected endpoint for Streamlit to fetch salary data."""
- 
+
     cursor = db["salary_stats"].find({ "fetch_date": {"$exists": True, "$ne": None}, "$or": [
             {"raw_error": {"$exists": False}},
             {"raw_error": {"$in": [None, "", [], {}]}}
