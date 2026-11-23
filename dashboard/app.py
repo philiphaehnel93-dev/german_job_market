@@ -36,9 +36,9 @@ from constants import (
     GERMANY_GEOJSON_URL,
     JOB_ROLE_MAPPINGS,
     JOB_TITLES_DICT_PATH,
+    ROLE_REGEX_PATTERNS,
     SMALL_CLUSTER_THRESHOLD,
 )
-
 
 # -----------------------------------------------------------------------------
 # DATA LOADING & HELPER FUNCTIONS
@@ -289,55 +289,24 @@ def build_distinctive_labels(
 
     return labels
 
-
 def get_role_regex(role_name: str) -> str:
     """
-    Maps occupational targets to accurate title regex patterns.
-    Includes any aliases mapped to `role_name` in JOB_ROLE_MAPPINGS while keeping
-    unmapped roles matched by their own distinct title.
+    Resolves a role name to its configured title regex from constants.py,
+    appending any explicit aliases from JOB_ROLE_MAPPINGS.
     """
     base = _strip_role_code(role_name).lower().strip()
-    patterns: List[str] = []
+    canonical = JOB_ROLE_MAPPINGS.get(base, base).lower().strip()
 
-    if "business intelligence" in base or base.startswith("bi "):
-        patterns.append(r"business intelligence|\bbi\b|power bi|tableau|qlik")
-    elif "analytics engineer" in base:
-        patterns.append(r"analytics engineer|dbt|data modeling")
-    elif "data architect" in base:
-        patterns.append(r"data architect|datenarchitekt|enterprise architect")
-    elif "data engineer" in base:
-        patterns.append(r"data engineer|data integration|big data|data platform|etl")
-    elif "data scientist" in base:
-        patterns.append(r"data scientist|data science")
-    elif "machine learning" in base or "ml engineer" in base:
-        patterns.append(r"machine learning|\bml\b|mlops|ai engineer|computer vision|\bnlp\b")
-    elif "data analyst" in base:
-        patterns.append(r"data analyst|datenanalyst|business analyst")
-    elif "cloud" in base:
-        patterns.append(r"cloud engineer|cloud architect|\baws\b|\bazure\b|\bgcp\b")
-    elif "devops" in base:
-        patterns.append(r"devops|\bsre\b|site reliability|platform engineer|infrastructure engineer")
-    elif "backend" in base:
-        patterns.append(r"backend|back-end|back end")
-    elif "software" in base:
-        patterns.append(r"software|developer|programmer|frontend|fullstack|entwickler|\bswe\b")
-    elif "deploy forward" in base or "forward deployed" in base:
-        patterns.append(r"deploy forward|forward deployed")
-    else:
-        patterns.append(re.escape(base))
+    primary_pattern = ROLE_REGEX_PATTERNS.get(canonical, re.escape(base))
 
-    # Also include any aliases explicitly grouped into this role via JOB_ROLE_MAPPINGS
-    mapped_aliases = [
+    aliases = [
         re.escape(alias.strip().lower())
         for alias, target in JOB_ROLE_MAPPINGS.items()
-        if str(target).strip().lower() in {role_name.strip().lower(), base}
-        and alias.strip()
+        if str(target).strip().lower() in {canonical, base} and alias.strip()
     ]
-    for alias_pat in mapped_aliases:
-        if alias_pat not in patterns:
-            patterns.append(alias_pat)
 
-    return "|".join(patterns)
+    # Deduplicate while preserving order
+    return "|".join(dict.fromkeys([primary_pattern, *aliases]))
 
 
 def normalize_is_remote(val) -> str:
