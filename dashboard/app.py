@@ -85,9 +85,16 @@ def safe_parse(val) -> List[str]:
 
 
 def _get_auth_headers() -> Dict[str, str]:
-    service_token = os.getenv("API_SECRET_KEY")
+    service_token = os.getenv("API_SECRET_KEY") or ""
+    if not service_token:
+        try:
+            service_token = st.secrets.get("API_SECRET_KEY", "")
+        except Exception:
+            service_token = ""
+
     if not service_token:
         return {}
+
     return {
         "accept": "application/json",
         "Authorization": f"Bearer {service_token}",
