@@ -7,7 +7,8 @@ import ast
 import json
 import os
 import re
-from typing import Dict, List
+import sys
+from typing import Dict, List, Tuple
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -18,137 +19,19 @@ import seaborn as sns
 from sklearn.preprocessing import MultiLabelBinarizer
 import streamlit as st
 
-# -----------------------------------------------------------------------------
-# DATA SOURCES, CONSTANTS & SCHEMAS
-# -----------------------------------------------------------------------------
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-FASTAPI_BASE_URL = "http://fastapi-service:8081/api/v1"
-GERMANY_GEOJSON_URL = (
-    "https://raw.githubusercontent.com/isellsoap/deutschlandGeoJSON/"
-    "main/2_bundeslaender/4_niedrig.geo.json"
+from constants import (
+    CITIES_COORDS,
+    CITY_TO_STATE,
+    ENTGELDATLAS_BASELINES,
+    FASTAPI_BASE_URL,
+    GERMAN_STATES,
+    GERMANY_GEOJSON_URL,
+    JOB_ROLE_MAPPINGS,
+    JOB_TITLES_DICT_PATH,
+    SMALL_CLUSTER_THRESHOLD,
 )
-
-ENTGELDATLAS_BASELINES: Dict[str, Dict[str, int]] = {
-    "Data Engineer (43214)": {"p25": 55_200, "median": 72_400, "p75": 88_900},
-    "Data Scientist (43104)": {"p25": 58_100, "median": 75_600, "p75": 92_300},
-    "Software Engineer (43414)": {"p25": 52_400, "median": 68_800, "p75": 85_100},
-}
-
-CITIES_COORDS: Dict[str, Dict[str, float]] = {
-    "Berlin": {"lat": 52.5200, "lon": 13.4050},
-    "München": {"lat": 48.1351, "lon": 11.5820},
-    "Munich": {"lat": 48.1351, "lon": 11.5820},
-    "Hamburg": {"lat": 53.5511, "lon": 9.9937},
-    "Frankfurt am Main": {"lat": 50.1109, "lon": 8.6821},
-    "Frankfurt": {"lat": 50.1109, "lon": 8.6821},
-    "Köln": {"lat": 50.9375, "lon": 6.9603},
-    "Cologne": {"lat": 50.9375, "lon": 6.9603},
-    "Stuttgart": {"lat": 48.7758, "lon": 9.1829},
-    "Düsseldorf": {"lat": 51.2277, "lon": 6.7735},
-    "Dusseldorf": {"lat": 51.2277, "lon": 6.7735},
-    "Dortmund": {"lat": 51.5136, "lon": 7.4653},
-    "Essen": {"lat": 51.4556, "lon": 7.0116},
-    "Leipzig": {"lat": 51.3397, "lon": 12.3731},
-    "Bremen": {"lat": 53.0793, "lon": 8.8017},
-    "Dresden": {"lat": 51.0504, "lon": 13.7373},
-    "Hannover": {"lat": 52.3759, "lon": 9.7320},
-    "Nürnberg": {"lat": 49.4521, "lon": 11.0767},
-    "Nuremberg": {"lat": 49.4521, "lon": 11.0767},
-    "Duisburg": {"lat": 51.4344, "lon": 6.7623},
-    "Bochum": {"lat": 51.4818, "lon": 7.2162},
-    "Wuppertal": {"lat": 51.2562, "lon": 7.1508},
-    "Bonn": {"lat": 50.7374, "lon": 7.0982},
-    "Bielefeld": {"lat": 52.0302, "lon": 8.5325},
-    "Mannheim": {"lat": 49.4875, "lon": 8.4660},
-    "Karlsruhe": {"lat": 49.0069, "lon": 8.4037},
-    "Wiesbaden": {"lat": 50.0782, "lon": 8.2397},
-    "Münster": {"lat": 51.9607, "lon": 7.6261},
-    "Aachen": {"lat": 50.7753, "lon": 6.0839},
-    "Freiburg": {"lat": 47.9990, "lon": 7.8421},
-    "Ulm": {"lat": 48.4011, "lon": 9.9876},
-    "Bruchsal": {"lat": 49.1259, "lon": 8.5997},
-}
-
-GERMAN_STATES: List[str] = [
-    "Baden-Württemberg",
-    "Bayern",
-    "Berlin",
-    "Brandenburg",
-    "Bremen",
-    "Hamburg",
-    "Hessen",
-    "Mecklenburg-Vorpommern",
-    "Niedersachsen",
-    "Nordrhein-Westfalen",
-    "Rheinland-Pfalz",
-    "Saarland",
-    "Sachsen",
-    "Sachsen-Anhalt",
-    "Schleswig-Holstein",
-    "Thüringen",
-]
-
-# Maps cities (and common English/state aliases) to official GeoJSON Bundesland names
-CITY_TO_STATE: Dict[str, str] = {
-    "Berlin": "Berlin",
-    "München": "Bayern",
-    "Munich": "Bayern",
-    "Nürnberg": "Bayern",
-    "Nuremberg": "Bayern",
-    "Augsburg": "Bayern",
-    "Regensburg": "Bayern",
-    "Erlangen": "Bayern",
-    "Würzburg": "Bayern",
-    "Bavaria": "Bayern",
-    "Hamburg": "Hamburg",
-    "Frankfurt am Main": "Hessen",
-    "Frankfurt": "Hessen",
-    "Wiesbaden": "Hessen",
-    "Darmstadt": "Hessen",
-    "Kassel": "Hessen",
-    "Hesse": "Hessen",
-    "Köln": "Nordrhein-Westfalen",
-    "Cologne": "Nordrhein-Westfalen",
-    "Düsseldorf": "Nordrhein-Westfalen",
-    "Dusseldorf": "Nordrhein-Westfalen",
-    "Dortmund": "Nordrhein-Westfalen",
-    "Essen": "Nordrhein-Westfalen",
-    "Duisburg": "Nordrhein-Westfalen",
-    "Bochum": "Nordrhein-Westfalen",
-    "Wuppertal": "Nordrhein-Westfalen",
-    "Bonn": "Nordrhein-Westfalen",
-    "Bielefeld": "Nordrhein-Westfalen",
-    "Münster": "Nordrhein-Westfalen",
-    "Aachen": "Nordrhein-Westfalen",
-    "Stuttgart": "Baden-Württemberg",
-    "Mannheim": "Baden-Württemberg",
-    "Karlsruhe": "Baden-Württemberg",
-    "Freiburg": "Baden-Württemberg",
-    "Ulm": "Baden-Württemberg",
-    "Bruchsal": "Baden-Württemberg",
-    "Heidelberg": "Baden-Württemberg",
-    "Leipzig": "Sachsen",
-    "Dresden": "Sachsen",
-    "Chemnitz": "Sachsen",
-    "Bremen": "Bremen",
-    "Hannover": "Niedersachsen",
-    "Hanover": "Niedersachsen",
-    "Braunschweig": "Niedersachsen",
-    "Wolfsburg": "Niedersachsen",
-    "Potsdam": "Brandenburg",
-    "Kiel": "Schleswig-Holstein",
-    "Lübeck": "Schleswig-Holstein",
-    "Rostock": "Mecklenburg-Vorpommern",
-    "Schwerin": "Mecklenburg-Vorpommern",
-    "Mainz": "Rheinland-Pfalz",
-    "Koblenz": "Rheinland-Pfalz",
-    "Saarbrücken": "Saarland",
-    "Magdeburg": "Sachsen-Anhalt",
-    "Halle": "Sachsen-Anhalt",
-    "Erfurt": "Thüringen",
-    "Jena": "Thüringen",
-    **{state: state for state in GERMAN_STATES},
-}
 
 
 # -----------------------------------------------------------------------------
@@ -158,15 +41,26 @@ CITY_TO_STATE: Dict[str, str] = {
 
 @st.cache_data
 def load_job_titles() -> List[str]:
-    file_path = "/app/tech_jobs_dictionary.json"
-    if os.path.exists(file_path):
+    """Loads deduplicated, canonically grouped occupational targets while preserving order."""
+    raw_titles: List[str] = list(ENTGELDATLAS_BASELINES.keys())
+    if os.path.exists(JOB_TITLES_DICT_PATH):
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(JOB_TITLES_DICT_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return list(data.keys()) if isinstance(data, dict) else data
+                raw_titles = list(data.keys()) if isinstance(data, dict) else list(data)
         except (OSError, json.JSONDecodeError) as exc:
             st.error(f"Could not parse JSON: {exc}")
-    return list(ENTGELDATLAS_BASELINES.keys())
+
+    seen = set()
+    unique_titles: List[str] = []
+    for title in raw_titles:
+        clean = str(title).strip()
+        canonical = JOB_ROLE_MAPPINGS.get(clean.lower(), clean)
+        key = canonical.lower()
+        if canonical and key not in seen:
+            seen.add(key)
+            unique_titles.append(canonical)
+    return unique_titles
 
 
 def safe_parse(val) -> List[str]:
@@ -291,12 +185,20 @@ def load_germany_geojson() -> dict:
         return {}
 
 
-def compute_centroids(df: pd.DataFrame) -> pd.DataFrame:
+def compute_centroids(
+    df: pd.DataFrame,
+) -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
+    """
+    Computes cluster skill prevalence centroids, job-weighted global skill prevalence,
+    and cluster sizes (ordered from largest to smallest cluster).
+    """
     if "tech_stack" not in df.columns or "cluster_id" not in df.columns:
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.Series(dtype=float), pd.Series(dtype=int)
+
     valid_df = df[df["tech_stack"].apply(len) > 0]
     if valid_df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.Series(dtype=float), pd.Series(dtype=int)
+
     mlb = MultiLabelBinarizer()
     binary_matrix = mlb.fit_transform(valid_df["tech_stack"])
     feature_df = pd.DataFrame(
@@ -304,29 +206,79 @@ def compute_centroids(df: pd.DataFrame) -> pd.DataFrame:
         columns=[str(col) for col in mlb.classes_],
         index=valid_df.index,
     )
-    feature_df["cluster_id"] = df.loc[feature_df.index, "cluster_id"]
-    return feature_df.groupby("cluster_id").mean()
+
+    global_means = feature_df.mean(axis=0)
+    feature_df["cluster_id"] = valid_df["cluster_id"]
+
+    cluster_sizes = df["cluster_id"].value_counts()
+    centroids = feature_df.groupby("cluster_id").mean()
+
+    ordered_ids = [cid for cid in cluster_sizes.index if cid in centroids.index]
+    centroids = centroids.loc[ordered_ids]
+    cluster_sizes = cluster_sizes.loc[ordered_ids]
+
+    return centroids, global_means, cluster_sizes
+
+
+def build_distinctive_labels(
+    centroids: pd.DataFrame,
+    global_means: pd.Series,
+    cluster_sizes: pd.Series,
+    top_n: int = 3,
+    min_prevalence: float = 0.15,
+) -> Dict[int, str]:
+    """
+    Builds interpretable cluster labels using distinctive lift over the role average
+    plus exact sample size (n=...), avoiding repetitive generic labels.
+    """
+    labels: Dict[int, str] = {}
+    if centroids.empty:
+        return labels
+
+    lift_matrix = centroids.sub(global_means, axis=1)
+
+    for cid, row in centroids.iterrows():
+        n_jobs = int(cluster_sizes.get(cid, 0))
+        eligible = row[row >= min_prevalence].index
+        if len(eligible) >= top_n:
+            distinctive_skills = lift_matrix.loc[cid, eligible].nlargest(top_n).index.tolist()
+        else:
+            distinctive_skills = row[row > 0].nlargest(top_n).index.tolist()
+
+        skill_str = " / ".join(distinctive_skills) if distinctive_skills else "General Skills"
+        labels[cid] = f"Cluster {cid} (n={n_jobs:,}): {skill_str}"
+
+    return labels
 
 
 def get_role_regex(role_name: str) -> str:
-    r = role_name.lower()
-    if "software" in r:
-        return "software|developer|programmer|backend|frontend|fullstack|entwickler|swe"
+    """Maps occupational targets to accurate, non-overlapping title regex patterns."""
+    r = role_name.lower().strip()
+    if "business intelligence" in r or r.startswith("bi "):
+        return r"business intelligence|\bbi\b|power bi|tableau|qlik"
+    if "analytics engineer" in r:
+        return r"analytics engineer|dbt|data modeling"
+    if "data architect" in r:
+        return r"data architect|datenarchitekt|enterprise architect"
     if "data engineer" in r:
-        return "data engineer|data integration|big data|data platform|data architecture"
+        return r"data engineer|data integration|big data|data platform|etl"
     if "data scientist" in r:
-        return "data scientist|data science|machine learning|ml|ai|artificial intelligence"
+        return r"data scientist|data science"
+    if "machine learning" in r or "ml engineer" in r:
+        return r"machine learning|\bml\b|mlops|ai engineer|computer vision|\bnlp\b"
     if "data analyst" in r:
-        return "data analyst|analytics|business analyst|bi |business intelligence"
+        return r"data analyst|datenanalyst|business analyst"
     if "cloud" in r:
-        return "cloud|aws|azure|gcp"
-    if "machine learning" in r:
-        return "machine learning|ml|ai|artificial intelligence|computer vision|nlp"
+        return r"cloud engineer|cloud architect|\baws\b|\bazure\b|\bgcp\b"
     if "devops" in r:
-        return "devops|sre|site reliability|platform|infrastructure"
+        return r"devops|\bsre\b|site reliability|platform engineer|infrastructure engineer"
     if "backend" in r:
-        return "backend|back-end|back end|java|c#|golang|python"
-    return role_name.split(" ")[0]
+        return r"backend|back-end|back end"
+    if "software" in r:
+        return r"software|developer|programmer|frontend|fullstack|entwickler|\bswe\b"
+    if "deploy forward" in r or "forward deployed" in r:
+        return r"deploy forward|forward deployed"
+    return re.escape(r)
 
 
 def normalize_is_remote(val) -> str:
@@ -354,7 +306,69 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.sidebar.title("Configuration")
+# Balanced sidebar styling + safe top padding (prevents KPI clipping & removes extra gaps)
+st.markdown(
+    """
+    <style>
+        .block-container {
+            padding-top: 2.6rem;
+            padding-bottom: 1.5rem;
+        }
+        section[data-testid="stSidebar"] > div {
+            padding-top: 0.9rem;
+        }
+        section[data-testid="stSidebar"] h3 {
+            font-size: 1.15rem;
+            margin-bottom: 0.35rem;
+        }
+        section[data-testid="stSidebar"] label,
+        section[data-testid="stSidebar"] .stRadio p,
+        section[data-testid="stSidebar"] .stCheckbox p {
+            font-size: 0.90rem !important;
+            line-height: 1.3 !important;
+        }
+        section[data-testid="stSidebar"] .stRadio > div {
+            gap: 0.22rem !important;
+        }
+        section[data-testid="stSidebar"] .stCheckbox {
+            margin-bottom: -0.45rem !important;
+        }
+        section[data-testid="stSidebar"] hr {
+            margin: 0.65rem 0 !important;
+        }
+        .dashboard-header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 0.55rem;
+        }
+        .dashboard-title {
+            font-size: 1.45rem;
+            font-weight: 700;
+            color: #1f2937;
+            margin: 0;
+            line-height: 1.2;
+        }
+        .dashboard-badge {
+            font-size: 0.8rem;
+            color: #6b7280;
+        }
+        div[data-testid="stMetric"] {
+            padding: 0.2rem 0;
+        }
+        hr.compact-divider {
+            margin: 0.45rem 0 0.75rem 0;
+            border: none;
+            border-top: 1px solid #e5e7eb;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.sidebar.markdown("### Configuration")
 
 # 1. Fetch ALL data first to generate counts
 all_jobs_master = fetch_all_jobs_from_fastapi()
@@ -366,11 +380,19 @@ if all_jobs_master.empty:
     )
     st.stop()
 
-# Calculate jobs per role using robust regex mapping
+# Calculate jobs per role using accurate regex mapping (deduplicating identical regex aliases)
 job_options = load_job_titles()
 role_counts: Dict[str, int] = {}
+deduped_job_options: List[str] = []
+seen_regexes = set()
+
 for role in job_options:
     regex_pattern = get_role_regex(role)
+    if regex_pattern in seen_regexes:
+        continue
+    seen_regexes.add(regex_pattern)
+    deduped_job_options.append(role)
+
     if "job_title" in all_jobs_master.columns:
         count = int(
             all_jobs_master["job_title"]
@@ -381,12 +403,11 @@ for role in job_options:
         count = 0
     role_counts[role] = count
 
-formatted_options = [f"{role} ({role_counts[role]} jobs)" for role in job_options]
+formatted_options = [f"{role} ({role_counts[role]:,})" for role in deduped_job_options]
 selected_formatted_role = st.sidebar.radio("Occupational Target", options=formatted_options)
 selected_role = selected_formatted_role.split(" (")[0]
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("Job Postings Filters")
 
 if "job_title" in all_jobs_master.columns:
     selected_regex = get_role_regex(selected_role)
@@ -398,7 +419,7 @@ if "job_title" in all_jobs_master.columns:
 else:
     all_data = pd.DataFrame()
 
-# 2. Resolve seniority column consistently
+# 2. Resolve seniority column consistently (click-only checkboxes)
 sen_col = next((c for c in ["seniority_level", "level"] if c in all_data.columns), None)
 
 st.sidebar.markdown("**Seniority Level**")
@@ -409,7 +430,7 @@ if sen_col:
     selected_seniority = [
         sen
         for sen in available_seniorities
-        if st.sidebar.checkbox(f"Seniority: {sen}", value=True, key=f"sen_{sen}")
+        if st.sidebar.checkbox(sen, value=True, key=f"sen_{sen}")
     ]
 else:
     st.sidebar.caption("No seniority data available.")
@@ -417,7 +438,7 @@ else:
 
 st.sidebar.markdown("---")
 
-# 3. Resolve work model (derive from is_remote if work_model is missing)
+# 3. Resolve work model (click-only checkboxes)
 st.sidebar.markdown("**Work Model**")
 if "work_model" not in all_data.columns and "is_remote" in all_data.columns:
     all_data["work_model"] = all_data["is_remote"].apply(normalize_is_remote)
@@ -429,7 +450,7 @@ if "work_model" in all_data.columns:
     selected_work_models = [
         model
         for model in available_models
-        if st.sidebar.checkbox(f"Model: {model}", value=True, key=f"mod_{model}")
+        if st.sidebar.checkbox(model, value=True, key=f"mod_{model}")
     ]
 else:
     st.sidebar.caption("No work model data available.")
@@ -449,8 +470,9 @@ if "work_model" in filtered_jobs.columns and selected_work_models is not None:
         .isin(selected_work_models)
     ]
 
-# MAIN UI - GENERAL PURPOSE CLEAN LAYOUT
-st.title("German Tech Role Market Segmentation")
+# -----------------------------------------------------------------------------
+# COMPACT HEADER & TOP KPI / SALARY BAR
+# -----------------------------------------------------------------------------
 
 api_response = fetch_salary_data_from_fastapi()
 salary_data = api_response.get("salaryData", {})
@@ -468,7 +490,22 @@ for key in ENTGELDATLAS_BASELINES:
                 salary_stats = salary_data[code_match.group(1)]
         break
 
-# Clean Top Metrics Bar (MacBook Optimized, Compact)
+source_caption = (
+    "✅ Salary baselines loaded from live API"
+    if api_response.get("source") == "api"
+    else "⚠️ Salary baselines loaded from offline fallback"
+)
+
+st.markdown(
+    f"""
+    <div class="dashboard-header">
+        <h1 class="dashboard-title">German Tech Role Market Segmentation</h1>
+        <span class="dashboard-badge">{source_caption}</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
 col_m1, col_m2, col_m3, col_m4 = st.columns(4)
 col_m1.metric("Total Database", f"{len(all_jobs_master):,}")
 col_m2.metric(f"Role: {selected_role}", f"{role_counts.get(selected_role, 0):,}")
@@ -481,12 +518,11 @@ else:
     median_sal = "N/A"
 col_m4.metric("National Median Salary", median_sal)
 
-if api_response.get("source") == "api":
-    st.caption("✅ Salary baselines loaded from live API.")
-else:
-    st.caption("⚠️ Salary baselines loaded from offline fallback.")
+st.markdown('<hr class="compact-divider">', unsafe_allow_html=True)
 
-st.markdown("---")
+# -----------------------------------------------------------------------------
+# MAIN CONTENT TABS (STAKEHOLDER-FRIENDLY LABELS)
+# -----------------------------------------------------------------------------
 
 if len(filtered_jobs) < 3 or "cluster_id" not in filtered_jobs.columns:
     st.warning(
@@ -494,82 +530,110 @@ if len(filtered_jobs) < 3 or "cluster_id" not in filtered_jobs.columns:
         "Please broaden your search."
     )
 else:
-    centroid_matrix = compute_centroids(filtered_jobs)
+    centroid_matrix, global_skill_means, cluster_sizes = compute_centroids(filtered_jobs)
+    dynamic_labels = build_distinctive_labels(
+        centroid_matrix, global_skill_means, cluster_sizes
+    )
 
-    dynamic_labels = {}
     if not centroid_matrix.empty:
-        for idx, row in centroid_matrix.iterrows():
-            top_skills = row.nlargest(3).index.tolist()
-            if top_skills:
-                dynamic_labels[idx] = f"Cluster {idx}: " + " / ".join(top_skills)
-            else:
-                dynamic_labels[idx] = f"Cluster {idx}: General Skills"
-
         centroid_matrix.index = centroid_matrix.index.map(dynamic_labels)
 
-    if "cluster_name" not in filtered_jobs.columns:
-        filtered_jobs["cluster_name"] = (
-            filtered_jobs["cluster_id"].map(dynamic_labels).fillna("General Cluster")
-        )
+    filtered_jobs["cluster_name"] = (
+        filtered_jobs["cluster_id"].map(dynamic_labels).fillna("General Cluster")
+    )
 
     tab_heatmap, tab_deepdive, tab_geo, tab_monitoring = st.tabs(
         [
-            "📊 Skill Heatmap & Distribution",
-            "🔍 Archetype Deep Dive",
-            "🗺️ Geographic Hubs",
-            "📈 ML Monitoring",
+            "📊 Skill Demand Overview",
+            "🔍 Role Profiles & Listings",
+            "🗺️ Hiring Locations",
+            "📈 Model Health & Quality",
         ]
     )
 
     with tab_heatmap:
-        st.subheader("Market Archetypes & Skill Prevalence")
+        st.subheader("Market Segments & Skill Demand")
         sub_chart_type, sub_volumes = st.tabs(
-            ["Skill Heatmap", "Cluster Volume Distribution"]
+            ["Skill Demand Matrix", "Market Share by Segment"]
         )
 
         with sub_chart_type:
-            if not centroid_matrix.empty:
-                top_skills = centroid_matrix.mean().nlargest(
-                    min(12, centroid_matrix.shape[1])
+            if not centroid_matrix.empty and not global_skill_means.empty:
+                top_skills = global_skill_means.nlargest(
+                    min(12, len(global_skill_means))
                 ).index
                 plot_matrix = centroid_matrix[top_skills]
-                fig, ax = plt.subplots(figsize=(10, 4))
+
+                fig, ax = plt.subplots(figsize=(10.5, max(3.6, 0.75 * len(plot_matrix) + 1.2)))
                 sns.heatmap(
                     plot_matrix,
                     cmap="YlGnBu",
+                    vmin=0.0,
+                    vmax=1.0,
                     annot=True,
                     fmt=".2f",
-                    cbar_kws={"label": "Probability"},
+                    cbar_kws={"label": "Share of Jobs in Segment"},
                     ax=ax,
                     annot_kws={"size": 8},
                     linewidths=0.5,
                 )
-                ax.set_ylabel("Cluster Archetype", fontsize=9)
-                ax.set_xlabel("Extracted Skills", fontsize=9)
+                ax.set_ylabel("Market Segment (Distinctive Skills)", fontsize=9)
+                ax.set_xlabel("Top Extracted Skills (Job-Weighted)", fontsize=9)
                 plt.xticks(rotation=40, ha="right", fontsize=8)
                 plt.yticks(fontsize=8)
-                plt.subplots_adjust(bottom=0.32, left=0.28, right=0.95, top=0.92)
+                plt.subplots_adjust(bottom=0.30, left=0.34, right=0.95, top=0.92)
                 st.pyplot(fig, clear_figure=True)
+
+                small_clusters = cluster_sizes[cluster_sizes < SMALL_CLUSTER_THRESHOLD]
+                if not small_clusters.empty:
+                    st.caption(
+                        f"ℹ️ Rows are ordered by segment volume. Segments with fewer than "
+                        f"{SMALL_CLUSTER_THRESHOLD} postings represent niche/outlier profiles—interpret "
+                        f"high percentages on small sample sizes cautiously."
+                    )
             else:
                 st.info("Insufficient skill metrics for heatmap generation.")
 
         with sub_volumes:
-            vol_series = filtered_jobs["cluster_name"].value_counts().sort_values(ascending=True)
-            fig_vol, ax_vol = plt.subplots(figsize=(10, 4))
-            vol_series.plot(kind="barh", ax=ax_vol, color="#2b5c8f")
+            vol_series = (
+                filtered_jobs["cluster_name"]
+                .value_counts()
+                .sort_values(ascending=True)
+            )
+            total_vol = int(vol_series.sum())
+            fig_vol, ax_vol = plt.subplots(
+                figsize=(10.5, max(3.5, 0.7 * len(vol_series) + 1.0))
+            )
+            bars = vol_series.plot(kind="barh", ax=ax_vol, color="#2b5c8f")
             ax_vol.set_xlabel("Number of Job Postings", fontsize=9)
-            ax_vol.set_ylabel("Cluster Archetype", fontsize=9)
+            ax_vol.set_ylabel("Market Segment", fontsize=9)
             ax_vol.tick_params(axis="both", labelsize=8)
-            plt.subplots_adjust(bottom=0.20, left=0.35, right=0.95, top=0.92)
+
+            max_val = vol_series.max() if not vol_series.empty else 1
+            ax_vol.set_xlim(0, max_val * 1.18)
+            for patch, count in zip(bars.patches, vol_series.values):
+                pct = (count / total_vol * 100) if total_vol > 0 else 0.0
+                ax_vol.text(
+                    patch.get_width() + max_val * 0.015,
+                    patch.get_y() + patch.get_height() / 2,
+                    f"{int(count):,} ({pct:.1f}%)",
+                    va="center",
+                    fontsize=8,
+                    color="#1f2937",
+                )
+
+            plt.subplots_adjust(bottom=0.18, left=0.38, right=0.96, top=0.92)
             st.pyplot(fig_vol, clear_figure=True)
 
     with tab_deepdive:
-        st.subheader("Archetype Deep Dive & Raw Postings")
-        active_archetypes = list(filtered_jobs["cluster_name"].dropna().unique())
+        st.subheader("Role Profiles & Raw Job Listings")
+        active_archetypes = (
+            filtered_jobs["cluster_name"].value_counts().index.tolist()
+        )
 
         if active_archetypes:
             selected_archetype = st.radio(
-                "Select Cluster to Inspect:",
+                "Select Segment to Inspect:",
                 options=active_archetypes,
                 horizontal=True,
             )
@@ -577,7 +641,7 @@ else:
                 filtered_jobs["cluster_name"] == selected_archetype
             ].copy()
 
-            st.markdown(f"**Top Hubs for {selected_archetype}**")
+            st.markdown(f"**Top Hiring Cities for {selected_archetype}**")
             loc_col = "location_city" if "location_city" in cluster_slice.columns else "location"
             if loc_col in cluster_slice.columns:
                 cleaned_locations = (
@@ -593,7 +657,7 @@ else:
 
             st.markdown("---")
             st.markdown(
-                f"**All Raw Postings in {selected_archetype} ({len(cluster_slice)} jobs)**"
+                f"**All Job Listings in {selected_archetype} ({len(cluster_slice):,} jobs)**"
             )
 
             if "tech_stack" not in cluster_slice.columns:
@@ -618,7 +682,7 @@ else:
             )
 
     with tab_geo:
-        st.subheader(f"Interactive Geographic Map & Hubs: {selected_role}")
+        st.subheader(f"Hiring Locations & Regional Demand: {selected_role}")
         st.caption(
             "ℹ️ **Interactive Map & Data Note:** Hover over or click on the 3D columns "
             "on the map to explore job density across German tech hubs. Listings "
@@ -755,13 +819,13 @@ else:
             st.info("No location data available.")
 
     with tab_monitoring:
-        st.subheader("ML Model Performance & Drift Tracking")
+        st.subheader("Model Health & Quality Tracking")
 
         st.markdown(
             """
-            ### 📖 Understanding Clustering Metrics
-            * **Inertia (Within-Cluster Sum of Squares):** Measures how tightly clustered data points are. Lower values indicate denser, more cohesive clusters.
-            * **Silhouette Score:** Measures cluster separation ranging from $-1$ to $+1$ (values $> 0.25$ indicate reasonable separation, $> 0.50$ indicate strong structures).
+            ### 📖 Understanding Segmentation Quality Metrics
+            * **Inertia (Within-Cluster Sum of Squares):** Measures how tightly grouped job postings are within each segment. Lower values indicate denser, more cohesive segments.
+            * **Silhouette Score:** Measures how cleanly segments are separated from $-1$ to $+1$ (values $> 0.25$ indicate reasonable separation, $> 0.50$ indicate strong structure).
             """
         )
 
@@ -797,17 +861,17 @@ else:
                     if sil_val >= 0.35:
                         st.success(
                             f"**Silhouette Score: {sil_val:.3f}** — 🟢 **Excellent Quality**: "
-                            "Clusters are well-defined and distinct."
+                            "Segments are well-defined and distinct."
                         )
                     elif sil_val >= 0.20:
                         st.warning(
                             f"**Silhouette Score: {sil_val:.3f}** — 🟡 **Moderate Quality**: "
-                            "Acceptable overlap between skill clusters."
+                            "Acceptable overlap between skill segments."
                         )
                     else:
                         st.error(
                             f"**Silhouette Score: {sil_val:.3f}** — 🔴 **Poor Quality**: "
-                            "Clusters overlap significantly; consider adjusting features or $k$."
+                            "Segments overlap significantly; consider adjusting features or $k$."
                         )
 
                 with col_h2:
