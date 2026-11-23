@@ -256,3 +256,4 @@ airflow_project/logs/
 airflow_project/logs/
 airflow_project/config/airflow.cfg
 
+*.parquet
