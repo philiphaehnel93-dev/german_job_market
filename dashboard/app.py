@@ -19,6 +19,12 @@ import seaborn as sns
 from sklearn.preprocessing import MultiLabelBinarizer
 import streamlit as st
 
+st.set_page_config(
+    page_title="German Tech Role Market Segmentation",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from constants import (
@@ -30,22 +36,47 @@ from constants import (
     GERMANY_GEOJSON_URL,
     JOB_ROLE_MAPPINGS,
     JOB_TITLES_DICT_PATH,
+    ROLE_REGEX_PATTERNS,
     SMALL_CLUSTER_THRESHOLD,
 )
-
 
 # -----------------------------------------------------------------------------
 # DATA LOADING & HELPER FUNCTIONS
 # -----------------------------------------------------------------------------
 
 
+def _strip_role_code(label: str) -> str:
+    """Removes a trailing numeric/parenthetical code such as ' (43214)' if present."""
+    return re.sub(r"\s*\([^)]*\)\s*$", "", str(label)).strip()
+
+
+def _resolve_job_titles_path() -> str:
+    """Finds tech_jobs_dictionary.json across Docker, local, and Streamlit Cloud layouts."""
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    candidates = [
+        JOB_TITLES_DICT_PATH,
+        os.path.join(current_dir, "tech_jobs_dictionary.json"),
+        os.path.join(parent_dir, "tech_jobs_dictionary.json"),
+        os.path.join(parent_dir, "dashboard", "tech_jobs_dictionary.json"),
+    ]
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    return ""
+
+
 @st.cache_data
 def load_job_titles() -> List[str]:
-    """Loads deduplicated, canonically grouped occupational targets while preserving order."""
+    """
+    Loads all jobs from tech_jobs_dictionary.json, grouping overlapping roles via
+    JOB_ROLE_MAPPINGS from constants.py while keeping all unmapped jobs visible as unique roles.
+    """
     raw_titles: List[str] = list(ENTGELDATLAS_BASELINES.keys())
-    if os.path.exists(JOB_TITLES_DICT_PATH):
+    dict_path = _resolve_job_titles_path()
+    if dict_path:
         try:
-            with open(JOB_TITLES_DICT_PATH, "r", encoding="utf-8") as f:
+            with open(dict_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 raw_titles = list(data.keys()) if isinstance(data, dict) else list(data)
         except (OSError, json.JSONDecodeError) as exc:
@@ -55,7 +86,15 @@ def load_job_titles() -> List[str]:
     unique_titles: List[str] = []
     for title in raw_titles:
         clean = str(title).strip()
-        canonical = JOB_ROLE_MAPPINGS.get(clean.lower(), clean)
+        if not clean:
+            continue
+        # Group overlapping roles defined in JOB_ROLE_MAPPINGS; keep all others as-is
+        canonical = (
+            JOB_ROLE_MAPPINGS.get(clean.lower())
+            or JOB_ROLE_MAPPINGS.get(_strip_role_code(clean).lower())
+            or clean
+        )
+        canonical = str(canonical).strip()
         key = canonical.lower()
         if canonical and key not in seen:
             seen.add(key)
@@ -85,16 +124,9 @@ def safe_parse(val) -> List[str]:
 
 
 def _get_auth_headers() -> Dict[str, str]:
-    service_token = os.getenv("API_SECRET_KEY") or ""
-    if not service_token:
-        try:
-            service_token = st.secrets.get("API_SECRET_KEY", "")
-        except Exception:
-            service_token = ""
-
+    service_token = os.getenv("API_SECRET_KEY")
     if not service_token:
         return {}
-
     return {
         "accept": "application/json",
         "Authorization": f"Bearer {service_token}",
@@ -257,35 +289,24 @@ def build_distinctive_labels(
 
     return labels
 
-
 def get_role_regex(role_name: str) -> str:
-    """Maps occupational targets to accurate, non-overlapping title regex patterns."""
-    r = role_name.lower().strip()
-    if "business intelligence" in r or r.startswith("bi "):
-        return r"business intelligence|\bbi\b|power bi|tableau|qlik"
-    if "analytics engineer" in r:
-        return r"analytics engineer|dbt|data modeling"
-    if "data architect" in r:
-        return r"data architect|datenarchitekt|enterprise architect"
-    if "data engineer" in r:
-        return r"data engineer|data integration|big data|data platform|etl"
-    if "data scientist" in r:
-        return r"data scientist|data science"
-    if "machine learning" in r or "ml engineer" in r:
-        return r"machine learning|\bml\b|mlops|ai engineer|computer vision|\bnlp\b"
-    if "data analyst" in r:
-        return r"data analyst|datenanalyst|business analyst"
-    if "cloud" in r:
-        return r"cloud engineer|cloud architect|\baws\b|\bazure\b|\bgcp\b"
-    if "devops" in r:
-        return r"devops|\bsre\b|site reliability|platform engineer|infrastructure engineer"
-    if "backend" in r:
-        return r"backend|back-end|back end"
-    if "software" in r:
-        return r"software|developer|programmer|frontend|fullstack|entwickler|\bswe\b"
-    if "deploy forward" in r or "forward deployed" in r:
-        return r"deploy forward|forward deployed"
-    return re.escape(r)
+    """
+    Resolves a role name to its configured title regex from constants.py,
+    appending any explicit aliases from JOB_ROLE_MAPPINGS.
+    """
+    base = _strip_role_code(role_name).lower().strip()
+    canonical = JOB_ROLE_MAPPINGS.get(base, base).lower().strip()
+
+    primary_pattern = ROLE_REGEX_PATTERNS.get(canonical, re.escape(base))
+
+    aliases = [
+        re.escape(alias.strip().lower())
+        for alias, target in JOB_ROLE_MAPPINGS.items()
+        if str(target).strip().lower() in {canonical, base} and alias.strip()
+    ]
+
+    # Deduplicate while preserving order
+    return "|".join(dict.fromkeys([primary_pattern, *aliases]))
 
 
 def normalize_is_remote(val) -> str:
@@ -306,12 +327,6 @@ def normalize_is_remote(val) -> str:
 # -----------------------------------------------------------------------------
 # STREAMLIT APPLICATION INTERFACE
 # -----------------------------------------------------------------------------
-
-st.set_page_config(
-    page_title="German Tech Role Market Segmentation",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
 
 # Balanced sidebar styling + safe top padding (prevents KPI clipping & removes extra gaps)
 st.markdown(
@@ -387,19 +402,12 @@ if all_jobs_master.empty:
     )
     st.stop()
 
-# Calculate jobs per role using accurate regex mapping (deduplicating identical regex aliases)
+# Keep all unique jobs from tech_jobs_dictionary.json (grouped only by JOB_ROLE_MAPPINGS)
 job_options = load_job_titles()
 role_counts: Dict[str, int] = {}
-deduped_job_options: List[str] = []
-seen_regexes = set()
 
 for role in job_options:
     regex_pattern = get_role_regex(role)
-    if regex_pattern in seen_regexes:
-        continue
-    seen_regexes.add(regex_pattern)
-    deduped_job_options.append(role)
-
     if "job_title" in all_jobs_master.columns:
         count = int(
             all_jobs_master["job_title"]
@@ -410,9 +418,9 @@ for role in job_options:
         count = 0
     role_counts[role] = count
 
-formatted_options = [f"{role} ({role_counts[role]:,})" for role in deduped_job_options]
+formatted_options = [f"{role} ({role_counts[role]:,})" for role in job_options]
 selected_formatted_role = st.sidebar.radio("Occupational Target", options=formatted_options)
-selected_role = selected_formatted_role.split(" (")[0]
+selected_role = selected_formatted_role.rsplit(" (", 1)[0]
 
 st.sidebar.markdown("---")
 
@@ -486,8 +494,14 @@ salary_data = api_response.get("salaryData", {})
 
 salary_stats = {}
 matched_baseline_key = None
+selected_role_clean = _strip_role_code(selected_role).lower()
 for key in ENTGELDATLAS_BASELINES:
-    if selected_role.lower() in key.lower() or key.lower() in selected_role.lower():
+    key_lower = key.lower()
+    if (
+        selected_role.lower() in key_lower
+        or key_lower in selected_role.lower()
+        or (selected_role_clean and selected_role_clean in key_lower)
+    ):
         matched_baseline_key = key
         if key in salary_data:
             salary_stats = salary_data[key]
@@ -515,7 +529,7 @@ st.markdown(
 
 col_m1, col_m2, col_m3, col_m4 = st.columns(4)
 col_m1.metric("Total Database", f"{len(all_jobs_master):,}")
-col_m2.metric(f"Role: {selected_role}", f"{role_counts.get(selected_role, 0):,}")
+col_m2.metric(f"Role: {selected_role}", f"{role_counts.get(selected_role, len(all_data)):,}")
 col_m3.metric("Matching Filters", f"{len(filtered_jobs):,}")
 
 if matched_baseline_key:

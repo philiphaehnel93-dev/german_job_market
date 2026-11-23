@@ -79,7 +79,7 @@ GERMAN_STATES: List[str] = [
     "Thüringen",
 ]
 
-# Maps raw API role variants to a single canonical display role
+# Maps raw role variants to a single canonical display role
 JOB_ROLE_MAPPINGS: Dict[str, str] = {
     "ml engineer": "Machine Learning Engineer",
     "machine learning engineer": "Machine Learning Engineer",
@@ -88,6 +88,22 @@ JOB_ROLE_MAPPINGS: Dict[str, str] = {
     "backend engineer": "Backend Developer",
     "backend developer": "Backend Developer",
     "devops engineer": "DevOps Engineer",
+}
+
+# Maps canonical lowercase role names to their job-title matching regex
+ROLE_REGEX_PATTERNS: Dict[str, str] = {
+    "business intelligence developer": r"business intelligence|\bbi\b|power bi|tableau|qlik",
+    "analytics engineer": r"analytics engineer|dbt|data modeling",
+    "data architect": r"data architect|datenarchitekt|enterprise architect",
+    "data engineer": r"data engineer|data integration|big data|data platform|etl",
+    "data scientist": r"data scientist|data science",
+    "machine learning engineer": r"machine learning|\bml\b|mlops|ai engineer|computer vision|\bnlp\b",
+    "data analyst": r"data analyst|datenanalyst|business analyst",
+    "cloud engineer": r"cloud engineer|cloud architect|\baws\b|\bazure\b|\bgcp\b",
+    "devops engineer": r"devops|\bsre\b|site reliability|platform engineer|infrastructure engineer",
+    "backend developer": r"backend|back-end|back end",
+    "software engineer": r"software|developer|programmer|frontend|fullstack|entwickler|\bswe\b",
+    "forward deployed engineer": r"deploy forward|forward deployed",
 }
 # Maps cities (and common English/state aliases) to official GeoJSON Bundesland names
 CITY_TO_STATE: Dict[str, str] = {
