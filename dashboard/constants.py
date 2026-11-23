@@ -5,7 +5,13 @@ for the German Tech Role Market Segmentation dashboard.
 
 from typing import Dict, List
 
-FASTAPI_BASE_URL: str = "http://fastapi-service:8081/api/v1"
+import os
+
+FASTAPI_BASE_URL: str = os.getenv(
+    "FASTAPI_BASE_URL",
+    "http://fastapi-service:8081/api/v1",
+)
+
 GERMANY_GEOJSON_URL: str = (
     "https://raw.githubusercontent.com/isellsoap/deutschlandGeoJSON/"
     "main/2_bundeslaender/4_niedrig.geo.json"
