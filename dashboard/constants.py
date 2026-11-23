@@ -7,17 +7,9 @@ from typing import Dict, List
 
 import os
 
-try:
-    import streamlit as st
-
-    _secret_url = st.secrets.get("FASTAPI_BASE_URL", "")
-except Exception:
-    _secret_url = ""
-
-FASTAPI_BASE_URL: str = (
-    os.getenv("FASTAPI_BASE_URL")
-    or _secret_url
-    or "http://fastapi-service:8081/api/v1"
+FASTAPI_BASE_URL: str = os.getenv(
+    "FASTAPI_BASE_URL",
+    "http://fastapi-service:8081/api/v1",
 )
 
 GERMANY_GEOJSON_URL: str = (
